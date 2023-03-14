@@ -83,6 +83,8 @@ export class Bot {
       process.env.MIN_LIQUIDITY_IN_USDT as string
     );
 
+    let nextBlock = (await this.provider.getBlockNumber()) + 1;
+
     console.log("Finding liquid pairs");
     let initialLiquidPairs = findLiquidPairs(
       this.pairs,
@@ -94,7 +96,8 @@ export class Bot {
     await batch(
       initialLiquidPairs,
       (pair) => pair.pair.reload(this.provider),
-      1000
+      1000,
+      true
     );
 
     let liquidPairs = findLiquidPairs(
@@ -114,9 +117,41 @@ export class Bot {
     console.log("Not blocked pairs: " + liquidPairs.length);
 
     while (true) {
-      const start = Date.now();
+      const pairsToUpdate = new Set<Pair>();
 
-      await batch(liquidPairs, (pair) => pair.pair.reload(this.provider), 1000);
+      const latestBlock = await this.provider.getBlock("latest");
+      while (nextBlock <= latestBlock.number) {
+        console.log("Scanning block " + nextBlock + "...");
+
+        const block = await this.provider.getBlockWithTransactions(nextBlock);
+
+        const receipts = await batch(
+          block.transactions,
+          (tx) => this.provider.getTransactionReceipt(tx.hash),
+          1000
+        );
+
+        for (const receipt of receipts) {
+          for (const log of receipt.logs) {
+            const pair = liquidPairs.find(
+              (pair) => pair.pair.address === log.address
+            );
+            if (pair) pairsToUpdate.add(pair.pair);
+          }
+        }
+
+        nextBlock++;
+      }
+
+      if (pairsToUpdate.size > 0) {
+        console.log("Updating " + pairsToUpdate.size + " pairs...");
+
+        await batch(
+          Array.from(pairsToUpdate.values()),
+          (pair) => pair.reload(this.provider),
+          1000
+        );
+      }
 
       const arbitragePairs = findLiquidPairs(
         liquidPairs.map((pair) => pair.pair),
@@ -264,8 +299,11 @@ export class Bot {
         return;
       }
 
-      const timeInLoop = Date.now() - start;
-      await sleep(12000 - timeInLoop); // 12 seconds is the block time
+      // 12 seconds is the average block time, 4 seconds grace period
+      let sleepTime = latestBlock.timestamp * 1000 + 16000 - Date.now();
+      sleepTime = Math.max(sleepTime, 1000); // sleep at least 1 second
+      console.log("Sleeping for " + sleepTime + " ms...");
+      await sleep(sleepTime);
     }
   }
 }
