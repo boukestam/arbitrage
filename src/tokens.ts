@@ -2,7 +2,7 @@ import { batch } from "./utils";
 import fs from "fs";
 
 import erc20ABI from "./abi/erc20.json";
-import { Contract, ContractRunner } from "ethers";
+import ethers, { Contract } from "ethers";
 import { Pair } from "./types";
 
 export interface TokenInfo {
@@ -12,7 +12,10 @@ export interface TokenInfo {
   decimals: number;
 }
 
-export async function loadTokens(tokens: string[], provider: ContractRunner) {
+export async function loadTokens(
+  tokens: string[],
+  provider: ethers.providers.JsonRpcBatchProvider
+) {
   const file = "data/tokens.json";
 
   let items: any[] = [];
@@ -38,37 +41,30 @@ export async function loadTokens(tokens: string[], provider: ContractRunner) {
 
     const newInfos = await batch(
       tokens,
-      (token) => {
+      async (token) => {
         const contract = new Contract(token, erc20ABI, provider);
         const info: any = {
           address: token,
         };
 
-        return new Promise<any>((resolve) => {
-          const timer = setTimeout(() => resolve(info), 30000); // this is needed to prevent process exit
+        try {
+          const symbol = await contract.symbol();
+          info.symbol = symbol;
+        } catch {}
 
-          contract
-            .symbol()
-            .then((symbol: any) => {
-              info.symbol = symbol;
-              return contract.name();
-            })
-            .then((name: any) => {
-              info.name = name;
-              return contract.decimals();
-            })
-            .then((decimals: any) => {
-              info.decimals = Number(decimals);
-              clearTimeout(timer);
-              resolve(info);
-            })
-            .catch((e) => {
-              clearTimeout(timer);
-              resolve(info);
-            });
-        });
+        try {
+          const name = await contract.name();
+          info.name = name;
+        } catch {}
+
+        try {
+          const decimals = await contract.decimals();
+          info.decimals = Number(decimals);
+        } catch {}
+
+        return info;
       },
-      1000,
+      100,
       true
     );
 

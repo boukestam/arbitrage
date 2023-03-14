@@ -1,4 +1,4 @@
-import { Contract, Log } from "ethers";
+import ethers, { Contract } from "ethers";
 
 export async function batch<I, O>(
   inputs: I[],
@@ -38,4 +38,29 @@ export async function retry<T>(
       retry++;
     }
   }
+}
+
+export function createMap<T>(
+  items: T[],
+  getKeys: (item: T) => string[]
+): Map<string, T[]> {
+  const map = new Map<string, T[]>();
+
+  for (const item of items) {
+    const keys = getKeys(item);
+    for (const key of keys) {
+      addItemToMap(map, item, key);
+    }
+  }
+
+  return map;
+}
+
+function addItemToMap<T>(map: Map<string, T[]>, item: T, key: string) {
+  if (!map.has(key)) map.set(key, []);
+  map.get(key).push(item);
+}
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(() => resolve(), ms));
 }

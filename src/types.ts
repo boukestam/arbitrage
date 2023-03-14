@@ -1,4 +1,4 @@
-import { ContractRunner } from "ethers";
+import ethers from "ethers";
 
 export type DEXType = "uniswap-v2";
 
@@ -11,7 +11,7 @@ export abstract class DEX {
 
   abstract getPairs(): Pair[];
 
-  abstract load(provider: ContractRunner): void;
+  abstract load(provider: ethers.providers.JsonRpcBatchProvider): void;
 
   abstract toJSON(): any;
   abstract fromJSON(data: any): void;
@@ -28,8 +28,9 @@ export abstract class Pair {
     this.token1 = token1;
   }
 
-  abstract reload(provider: ContractRunner): Promise<void>;
-  abstract hasTax(provider: ContractRunner): Promise<boolean>;
+  abstract reload(
+    provider: ethers.providers.JsonRpcBatchProvider
+  ): Promise<void>;
 
   other(token: string) {
     if (token === this.token0) return this.token1;

@@ -1,4 +1,4 @@
-import { Contract, ContractRunner } from "ethers";
+import ethers, { BigNumber, Contract } from "ethers";
 import { DEX, Pair, DEXType } from "./types";
 import { batch } from "./utils";
 
@@ -20,10 +20,10 @@ export class UniswapV2 extends DEX {
     return this.pairs;
   }
 
-  async load(provider: ContractRunner) {
+  async load(provider: ethers.providers.JsonRpcBatchProvider) {
     const factory = new Contract(this.factory, uniswapV2FactoryABI, provider);
 
-    const count = await factory.allPairsLength();
+    const count = (await factory.allPairsLength()).toNumber();
     const indexes = [];
     for (let i = 0; i < count; i++) indexes.push(i);
 
@@ -36,7 +36,13 @@ export class UniswapV2 extends DEX {
         const token0 = await pair.token0();
         const token1 = await pair.token1();
         const { _reserve0, _reserve1 } = await pair.getReserves();
-        return new UniswapV2Pair(address, token0, token1, _reserve0, _reserve1);
+        return new UniswapV2Pair(
+          address,
+          token0,
+          token1,
+          _reserve0.toBigInt(),
+          _reserve1.toBigInt()
+        );
       },
       1000,
       true
@@ -86,35 +92,15 @@ export class UniswapV2Pair extends Pair {
     this.reserve1 = reserve1;
   }
 
-  getContract(provider: ContractRunner) {
+  getContract(provider: ethers.providers.JsonRpcBatchProvider) {
     return new Contract(this.address, uniswapV2PairABI, provider);
   }
 
-  async reload(provider: ContractRunner) {
+  async reload(provider: ethers.providers.JsonRpcBatchProvider) {
     const contract = this.getContract(provider);
     const { _reserve0, _reserve1 } = await contract.getReserves();
-    this.reserve0 = _reserve0;
-    this.reserve1 = _reserve1;
-  }
-
-  hasTax(provider: ContractRunner): Promise<boolean> {
-    const contract = this.getContract(provider);
-
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(false), 30000);
-      contract.swap
-        .staticCall(100000n, 100000n, this.address, "0x")
-        .then(() => {
-          console.log("No tax in pair: " + this.address);
-          clearTimeout(timer);
-          resolve(false);
-        })
-        .catch((e) => {
-          console.error("Error during check for tax in pair: " + this.address);
-          clearTimeout(timer);
-          resolve(true);
-        });
-    });
+    this.reserve0 = _reserve0.toBigInt();
+    this.reserve1 = _reserve1.toBigInt();
   }
 
   convert(token: string, amount: bigint): bigint {

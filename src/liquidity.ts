@@ -1,12 +1,19 @@
 import { Pair } from "./types";
+import { createMap } from "./utils";
+
+export interface LiquidityInfo {
+  pair: Pair;
+  minAmount0: bigint;
+  minAmount1: bigint;
+}
 
 export function findLiquidPairs(
   pairs: Pair[],
   stable: string,
   minStableAmount: bigint
-): Pair[] {
-  const pairsByToken = createPairMap(pairs);
-  const output: Pair[] = [];
+): LiquidityInfo[] {
+  const pairsByToken = createMap(pairs, (pair) => [pair.token0, pair.token1]);
+  const output: LiquidityInfo[] = [];
 
   findLiquidPairsRecursive(
     output,
@@ -21,50 +28,49 @@ export function findLiquidPairs(
 }
 
 function findLiquidPairsRecursive(
-  output: Pair[],
+  output: LiquidityInfo[],
   visited: Set<Pair>,
   pairsByToken: Map<string, Pair[]>,
   token: string,
   minAmount: bigint,
   depth: number
 ) {
-  const stablePairs = pairsByToken.get(token);
+  const pairs = pairsByToken.get(token);
 
-  for (const pair of stablePairs) {
+  const nextLayer: { token: string; minAmount: bigint }[] = [];
+
+  for (const pair of pairs) {
     if (visited.has(pair)) continue;
     visited.add(pair);
 
-    if (pair.reserve(token) >= minAmount) {
-      output.push(pair);
-    }
+    if (pair.reserve(token) < minAmount) continue;
 
-    if (depth > 0) {
-      try {
-        findLiquidPairsRecursive(
-          output,
-          visited,
-          pairsByToken,
-          pair.other(token),
-          pair.convert(token, minAmount),
-          depth - 1
-        );
-      } catch {}
-    }
-  }
-}
+    const otherMinAmount = pair.convert(token, minAmount);
 
-export function createPairMap(pairs: Pair[]) {
-  const map = new Map<string, Pair[]>();
+    output.push({
+      pair,
+      minAmount0: pair.token0 === token ? minAmount : otherMinAmount,
+      minAmount1: pair.token0 === token ? otherMinAmount : minAmount,
+    });
 
-  for (const pair of pairs) {
-    addPairByToken(map, pair, pair.token0);
-    addPairByToken(map, pair, pair.token1);
+    if (depth === 0) continue;
+
+    nextLayer.push({
+      token: pair.other(token),
+      minAmount: otherMinAmount,
+    });
   }
 
-  return map;
-}
-
-function addPairByToken(map: Map<string, Pair[]>, pair: Pair, token: string) {
-  if (!map.has(token)) map.set(token, []);
-  map.get(token).push(pair);
+  for (const { token, minAmount } of nextLayer) {
+    try {
+      findLiquidPairsRecursive(
+        output,
+        visited,
+        pairsByToken,
+        token,
+        minAmount,
+        depth - 1
+      );
+    } catch {}
+  }
 }

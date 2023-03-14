@@ -1,11 +1,13 @@
-import { JsonRpcProvider } from "ethers";
+import { ethers } from "ethers";
 import { DEX } from "./types";
 import { UniswapV2 } from "./uniswap-v2";
 import { Bot } from "./bot";
 
-const provider = new JsonRpcProvider(
-  //"https://nd-497-196-530.p2pify.com/b5baf29f386396a64b054628ba0e8dbc"
-  "http://127.0.0.1:8545"
+require("dotenv").config();
+
+const provider = new ethers.providers.JsonRpcBatchProvider(
+  "https://nd-497-196-530.p2pify.com/b5baf29f386396a64b054628ba0e8dbc"
+  //"http://127.0.0.1:8545"
 );
 
 const dexes: DEX[] = [
@@ -31,5 +33,4 @@ process.on("exit", (code) => {
 bot
   .load()
   .then(() => bot.run())
-  .then(() => console.log("Bot finished"))
-  .catch(console.error);
+  .then(() => console.log("Bot finished"));

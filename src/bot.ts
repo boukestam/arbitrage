@@ -1,31 +1,46 @@
-import { ContractRunner } from "ethers";
-import { CircularArbitrager } from "./arbitrage";
+import ethers, { Wallet } from "ethers";
+import { CircularArbitrager } from "./circular-arbitrager";
 import { DEX, Pair } from "./types";
 import fs from "fs";
 import { loadTokens, TokenInfo } from "./tokens";
-import { batch } from "./utils";
+import { batch, sleep } from "./utils";
 import { findLiquidPairs } from "./liquidity";
+import {
+  executeFlashLoanArbitrage,
+  verifyFlashLoanArbitrage,
+} from "./flash-loan";
+import { blocked, starters } from "./config";
+import { formatUnits } from "ethers/lib/utils";
+import { Arbitrage } from "./arbitrage";
 
-const taxed = new Set<string>([
-  "0xCc802c45B55581713cEcd1Eb17BE9Ab7fcCb0844", // BHNY
-  "0x131157c6760f78f7dDF877C0019Eba175BA4b6F6", // BigSB
-  "0x73A83269b9bbAFC427E76Be0A2C1a1db2a26f4C2", // CIV
-  "0x7101a9392EAc53B01e7c07ca3baCa945A56EE105", // X7101
-  "0x7102DC82EF61bfB0410B1b1bF8EA74575bf0A105", // X7102
-  "0x7103eBdbF1f89be2d53EFF9B3CF996C9E775c105", // X7103
-  "0x7104D1f179Cc9cc7fb5c79Be6Da846E3FBC4C105", // X7104
-  "0x7105FAA4a26eD1c67B8B2b41BEc98F06Ee21D105", // X7105
-]);
+interface ProfitableArbitrage {
+  arbitrage: Arbitrage;
+  input: bigint;
+  token: TokenInfo;
+  profit: bigint;
+  profitInUSD: bigint;
+  gasInETH: bigint;
+  gasInUSD: bigint;
+  gasInToken: bigint;
+  netProfitInUSD: bigint;
+  gasLimit: bigint;
+  gasPrice: bigint;
+  args: any[];
+}
 
 export class Bot {
-  provider: ContractRunner;
+  provider: ethers.providers.JsonRpcBatchProvider;
   dexes: DEX[];
   stable: string;
 
   pairs: Pair[] = [];
   tokens = new Map<string, TokenInfo>();
 
-  constructor(provider: ContractRunner, dexes: DEX[], stable: string) {
+  constructor(
+    provider: ethers.providers.JsonRpcBatchProvider,
+    dexes: DEX[],
+    stable: string
+  ) {
     this.provider = provider;
     this.dexes = dexes;
     this.stable = stable;
@@ -63,37 +78,194 @@ export class Bot {
   }
 
   async run() {
+    const ETH_PRICE = BigInt(process.env.ETH_PRICE as string);
+    const minLiquidityInUSDT = BigInt(
+      process.env.MIN_LIQUIDITY_IN_USDT as string
+    );
+
     console.log("Finding liquid pairs");
-    this.pairs = findLiquidPairs(this.pairs, this.stable, 100000000000n);
-    console.log("Liquid pairs: " + this.pairs.length);
-
-    console.log("Finding taxes...");
-    const taxes = await batch(
+    let initialLiquidPairs = findLiquidPairs(
       this.pairs,
-      (pair) => pair.hasTax(this.provider),
-      10
+      this.stable,
+      minLiquidityInUSDT / 2n
     );
-    this.pairs = this.pairs.filter((pair, index) => !taxes[index]);
-    console.log("Untaxed pairs: " + this.pairs.length);
+    console.log("Initial liquid pairs: " + initialLiquidPairs.length);
 
-    const arbitrage = new CircularArbitrager(this.pairs);
-
-    console.log("Reloading arbitrage...");
-
-    await arbitrage.reload(this.provider);
-
-    console.log("Finding arbitrages...");
-
-    const arbitrages = arbitrage.find();
-
-    console.log("Found " + arbitrages.length + " arbitrages");
-
-    arbitrages.sort(
-      (a, b) => b.getProfitPercentage() - a.getProfitPercentage()
+    await batch(
+      initialLiquidPairs,
+      (pair) => pair.pair.reload(this.provider),
+      1000
     );
 
-    for (const arbitrage of arbitrages.splice(0, 10)) {
-      console.log(arbitrage.toString(this.tokens));
+    let liquidPairs = findLiquidPairs(
+      initialLiquidPairs.map((pair) => pair.pair),
+      this.stable,
+      minLiquidityInUSDT
+    );
+    console.log("Final liquid pairs: " + liquidPairs.length);
+
+    liquidPairs = liquidPairs.filter((pair) => {
+      if (blocked.has(pair.pair.token0) || blocked.has(pair.pair.token1))
+        return false;
+      // if (this.tokens.get(pair.pair.token0).symbol === "---") return false;
+      // if (this.tokens.get(pair.pair.token1).symbol === "---") return false;
+      return true;
+    });
+    console.log("Not blocked pairs: " + liquidPairs.length);
+
+    while (true) {
+      const start = Date.now();
+
+      await batch(liquidPairs, (pair) => pair.pair.reload(this.provider), 1000);
+
+      const arbitragePairs = findLiquidPairs(
+        liquidPairs.map((pair) => pair.pair),
+        this.stable,
+        minLiquidityInUSDT
+      );
+
+      const arbitrager = new CircularArbitrager(arbitragePairs);
+
+      const arbitrages = arbitrager.find(starters);
+
+      const results = await batch(
+        arbitrages,
+        async (arbitrage) => {
+          const token = this.tokens.get(arbitrage.token);
+
+          const pool = starters.find(
+            (starter) => starter.address === arbitrage.token
+          );
+
+          const { input, output } = arbitrager.findOptimalAmounts(
+            arbitrage,
+            pool.fee
+          );
+
+          try {
+            const { profit, gas, args } = await verifyFlashLoanArbitrage(
+              this.provider,
+              input,
+              arbitrage.getPath().map((path) => path.token),
+              pool.v3Pool,
+              pool.isToken0,
+              pool.fee
+            );
+
+            return { token, pool, input, profit, gas, args };
+          } catch (e) {
+            return null;
+          }
+        },
+        100
+      );
+
+      const gasData = await this.provider.getFeeData();
+
+      const profitableArbitrages: ProfitableArbitrage[] = [];
+
+      for (let i = 0; i < arbitrages.length; i++) {
+        const arbitrage = arbitrages[i];
+        const result = results[i];
+
+        if (!result) continue;
+
+        const { token, pool, input, profit, gas, args } = result;
+
+        const minLiquidityOfToken =
+          arbitragePairs.find((pair) => pair.pair.token0 === token.address)
+            ?.minAmount0 ||
+          arbitragePairs.find((pair) => pair.pair.token1 === token.address)
+            ?.minAmount1;
+
+        const profitInUSD = (profit * minLiquidityInUSDT) / minLiquidityOfToken;
+
+        const gasPrice = gasData.gasPrice.toBigInt();
+        const gasInETH = gas * gasPrice;
+        const gasInUSD = (gasInETH * ETH_PRICE) / BigInt(1e12);
+
+        const netProfitInUSD = profitInUSD - gasInUSD;
+
+        if (netProfitInUSD < 0) continue;
+
+        const gasInToken = (profit * gasInUSD) / profitInUSD;
+
+        const info: ProfitableArbitrage = {
+          arbitrage,
+          input,
+          token,
+          profit,
+          profitInUSD,
+          gasInETH,
+          gasInUSD,
+          gasInToken,
+          netProfitInUSD,
+          gasLimit: gas,
+          gasPrice: gasPrice,
+          args,
+        };
+
+        profitableArbitrages.push(info);
+      }
+
+      if (profitableArbitrages.length > 0) {
+        profitableArbitrages.sort((a, b) =>
+          Number(b.netProfitInUSD - a.netProfitInUSD)
+        );
+
+        const exeuctionProvider = new ethers.providers.JsonRpcProvider(
+          process.env.EXECUTION_RPC as string
+        );
+        const executionWallet = new Wallet(
+          process.env.PRIVATE_KEY as string,
+          exeuctionProvider
+        );
+
+        const arbitrage = profitableArbitrages[0];
+
+        console.log("Time: " + new Date().toLocaleString());
+        console.log(arbitrage.arbitrage.toString(this.tokens));
+        console.log(
+          "Optimal input: " +
+            formatUnits(arbitrage.input, arbitrage.token.decimals) +
+            " " +
+            arbitrage.token.symbol
+        );
+        console.log(
+          "Profit: " +
+            formatUnits(arbitrage.profit, arbitrage.token.decimals) +
+            " " +
+            arbitrage.token.symbol
+        );
+        console.log("Profit in USD: " + formatUnits(arbitrage.profitInUSD, 6));
+        console.log(
+          "Gas fee in USD: " +
+            parseFloat(formatUnits(arbitrage.gasInUSD, 6)).toFixed(2) +
+            " " +
+            arbitrage.token.symbol
+        );
+
+        try {
+          const receipt = await executeFlashLoanArbitrage(
+            executionWallet,
+            arbitrage.args,
+            arbitrage.gasInToken,
+            arbitrage.gasLimit,
+            arbitrage.gasPrice
+          );
+
+          console.log("Arbitrage successfull");
+          console.log(receipt);
+        } catch (e) {
+          console.log("Arbitrage failed");
+          console.error(e);
+        }
+
+        return;
+      }
+
+      const timeInLoop = Date.now() - start;
+      await sleep(12000 - timeInLoop); // 12 seconds is the block time
     }
   }
 }
