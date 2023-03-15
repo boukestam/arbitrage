@@ -1,4 +1,4 @@
-import ethers, { Wallet } from "ethers";
+import { ethers, Wallet } from "ethers";
 import { CircularArbitrager } from "./circular-arbitrager";
 import { DEX, Pair } from "./types";
 import fs from "fs";
@@ -295,8 +295,6 @@ export class Bot {
           console.log("Arbitrage failed");
           console.error(e);
         }
-
-        return;
       }
 
       // 12 seconds is the average block time, 4 seconds grace period

@@ -105,7 +105,11 @@ export async function executeFlashLoanArbitrage(
     gasLimit: gasLimit,
     gasPrice: gasPrice,
   });
-  const receipt = await tx.wait();
+  const receipt = await provider.provider.waitForTransaction(
+    tx.hash,
+    1,
+    360000
+  ); // 6 minutes
 
   return receipt;
 }
