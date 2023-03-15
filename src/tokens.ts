@@ -1,9 +1,9 @@
-import { batch } from "./utils";
+import { batch } from "./util/utils";
 import fs from "fs";
 
 import erc20ABI from "./abi/erc20.json";
-import ethers, { Contract } from "ethers";
-import { Pair } from "./types";
+import { ethers, Contract } from "ethers";
+import { Pair } from "./exchanges/types";
 
 export interface TokenInfo {
   address: string;

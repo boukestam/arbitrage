@@ -1,15 +1,17 @@
-import ethers, { BigNumber, Contract } from "ethers";
+import { ethers, BigNumber, Contract } from "ethers";
 import { DEX, Pair, DEXType } from "./types";
-import { batch } from "./utils";
+import { batch } from "../util/utils";
 
-import uniswapV2FactoryABI from "./abi/uniswap-v2-factory.json";
-import uniswapV2PairABI from "./abi/uniswap-v2-pair.json";
+import uniswapV2FactoryABI from "../abi/uniswap-v2-factory.json";
+import uniswapV2PairABI from "../abi/uniswap-v2-pair.json";
+import uniswapV2RouterABI from "../abi/uniswap-v2-router.json";
 
 export class UniswapV2 extends DEX {
   factory: string;
+  router: string;
   pairs: UniswapV2Pair[];
 
-  constructor(name: string, factory: string) {
+  constructor(name: string, factory: string, router: string) {
     super(name);
 
     this.factory = factory;
@@ -47,6 +49,24 @@ export class UniswapV2 extends DEX {
       1000,
       true
     );
+  }
+
+  async getSwapTx(provider: ethers.providers.JsonRpcBatchProvider, input: bigint, path: string[], to: string) {
+    const router = new Contract(
+      this.router,
+      uniswapV2RouterABI,
+      provider
+    );
+    
+    const swapTx = await router.populateTransaction.swapExactTokensForTokens(
+      input,
+      input,
+      path,
+      to,
+      Math.floor(Date.now() / 1000) + 600 // 10 minutes from now
+    );
+
+    return swapTx;
   }
 
   toJSON() {

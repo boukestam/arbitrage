@@ -12,6 +12,13 @@ export abstract class DEX {
   abstract getPairs(): Pair[];
 
   abstract load(provider: ethers.providers.JsonRpcBatchProvider): void;
+  
+  abstract getSwapTx(
+    provider: ethers.providers.JsonRpcBatchProvider, 
+    input: bigint, 
+    path: string[], 
+    to: string
+  ): Promise<ethers.PopulatedTransaction>;
 
   abstract toJSON(): any;
   abstract fromJSON(data: any): void;

@@ -1,10 +1,10 @@
 import { ethers } from "ethers";
 import { Arbitrage } from "./arbitrage";
-import { StartToken } from "./config";
-import { LiquidityInfo } from "./liquidity";
-import { percentage } from "./math";
-import { Pair } from "./types";
-import { batch, createMap } from "./utils";
+import { StartToken } from "../config";
+import { LiquidityInfo } from "../exchanges/liquidity";
+import { percentage } from "../util/math";
+import { Pair } from "../exchanges/types";
+import { batch, createMap } from "../util/utils";
 
 export class CircularArbitrager {
   pairs: LiquidityInfo[];
@@ -46,7 +46,7 @@ export class CircularArbitrager {
   }
 
   findForToken(token: string, amount: bigint, maxDepth: number) {
-    const nodes: Arbitrage[] = [new Arbitrage(null, token, amount, 0)];
+    const nodes: Arbitrage[] = [new Arbitrage(null, null, token, amount, 0)];
 
     const bestOutputByToken = new Map<string, bigint>();
     bestOutputByToken.set(token, amount);
@@ -80,11 +80,11 @@ export class CircularArbitrager {
 
         if (otherToken === token) {
           arbitrages.push(
-            new Arbitrage(node, otherToken, amountOut, node.depth + 1)
+            new Arbitrage(node, pair.pair, otherToken, amountOut, node.depth + 1)
           );
         } else if (node.depth + 1 < maxDepth) {
           nodes.push(
-            new Arbitrage(node, otherToken, amountOut, node.depth + 1)
+            new Arbitrage(node, pair.pair, otherToken, amountOut, node.depth + 1)
           );
         }
       }

@@ -1,19 +1,23 @@
-import { mulDivRoundingUp } from "./math";
-import { TokenInfo } from "./tokens";
+import { mulDivRoundingUp } from "../util/math";
+import { TokenInfo } from "../tokens";
+import { Pair } from "../exchanges/types";
 
 export class Arbitrage {
   previous: Arbitrage | null;
+  pair: Pair;
   token: string;
   amount: bigint;
   depth: number;
 
   constructor(
     previous: Arbitrage | null,
+    pair: Pair | null,
     token: string,
     amount: bigint,
     depth: number
   ) {
     this.previous = previous;
+    this.pair = pair;
     this.token = token;
     this.amount = amount;
     this.depth = depth;

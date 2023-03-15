@@ -1,17 +1,17 @@
-import ethers, { Wallet } from "ethers";
-import { CircularArbitrager } from "./circular-arbitrager";
-import { DEX, Pair } from "./types";
+import { ethers, Wallet } from "ethers";
+import { CircularArbitrager } from "./arbitrage/circular-arbitrager";
+import { DEX, Pair } from "./exchanges/types";
 import fs from "fs";
 import { loadTokens, TokenInfo } from "./tokens";
-import { batch, sleep } from "./utils";
-import { findLiquidPairs } from "./liquidity";
+import { batch, sleep } from "./util/utils";
+import { findLiquidPairs } from "./exchanges/liquidity";
 import {
   executeFlashLoanArbitrage,
   verifyFlashLoanArbitrage,
-} from "./flash-loan";
+} from "./arbitrage/flash-loan";
 import { blocked, starters } from "./config";
 import { formatUnits } from "ethers/lib/utils";
-import { Arbitrage } from "./arbitrage";
+import { Arbitrage } from "./arbitrage/arbitrage";
 
 interface ProfitableArbitrage {
   arbitrage: Arbitrage;
@@ -181,7 +181,7 @@ export class Bot {
             const { profit, gas, args } = await verifyFlashLoanArbitrage(
               this.provider,
               input,
-              arbitrage.getPath().map((path) => path.token),
+              arbitrage.getPath(),
               pool.v3Pool,
               pool.isToken0,
               pool.fee

@@ -1,17 +1,16 @@
-import ethers, { BigNumber, Contract, Wallet } from "ethers";
+import { ethers, BigNumber, Contract, Wallet } from "ethers";
 import { Arbitrage } from "./arbitrage";
-import { UniswapV2Pair } from "./uniswap-v2";
+import { UniswapV2Pair } from "../exchanges//uniswap-v2";
 
-import uniswapV2RouterABI from "./abi/uniswap-v2-router.json";
-import arbitrageABI from "./abi/arbitrage.json";
-import erc20ABI from "./abi/erc20.json";
+import arbitrageABI from "../abi/arbitrage.json";
+import erc20ABI from "../abi/erc20.json";
 import { AbiCoder } from "ethers/lib/utils";
-import { mulDivRoundingUp } from "./math";
+import { mulDivRoundingUp } from "../util/math";
 
 export async function verifyFlashLoanArbitrage(
   provider: ethers.providers.JsonRpcBatchProvider,
   input: bigint,
-  path: string[],
+  path: Arbitrage[],
   flashPool: string,
   isToken0: boolean,
   fee: number
@@ -22,31 +21,20 @@ export async function verifyFlashLoanArbitrage(
 }> {
   const ADDRESS = process.env.ADDRESS as string;
   const FLASH_CONTRACT = process.env.FLASH_CONTRACT as string;
-  const UNISWAP_V2_ROUTER_CONTRACT = process.env
-    .UNISWAP_V2_ROUTER_CONTRACT as string;
 
   const owner = ADDRESS;
   const flash = new Contract(FLASH_CONTRACT, arbitrageABI, provider);
-  const router = new Contract(
-    UNISWAP_V2_ROUTER_CONTRACT,
-    uniswapV2RouterABI,
-    provider
-  );
 
-  const token = new Contract(path[0], erc20ABI, provider);
+  const token = new Contract(path[0].token, erc20ABI, provider);
 
-  const approveRouterTx = await token.populateTransaction.approve(
-    router.address,
-    input
-  );
+  const pairInstance = path[1].pair instanceof UniswapV2Pair;
 
-  const swapTx = await router.populateTransaction.swapExactTokensForTokens(
-    input,
-    input,
-    path,
-    flash.address,
-    Math.floor(Date.now() / 1000) + 600 // 10 minutes from now
-  );
+  //const swapTx = 
+
+  // const approveRouterTx = await token.populateTransaction.approve(
+  //   swapTx.to,
+  //   input
+  // );
 
   const feeAmount = Arbitrage.calculateFee(input, fee);
 
@@ -61,8 +49,8 @@ export async function verifyFlashLoanArbitrage(
     ["tuple(address to, uint256 value, bytes data)[]"],
     [
       [
-        [approveRouterTx.to, 0, approveRouterTx.data],
-        [swapTx.to, 0, swapTx.data],
+        //[approveRouterTx.to, 0, approveRouterTx.data],
+        //[swapTx.to, 0, swapTx.data],
         [repayTx.to, 0, repayTx.data],
       ],
     ]

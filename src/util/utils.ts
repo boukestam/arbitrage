@@ -1,4 +1,4 @@
-import ethers, { Contract } from "ethers";
+import { ethers, Contract } from "ethers";
 
 export async function batch<I, O>(
   inputs: I[],
