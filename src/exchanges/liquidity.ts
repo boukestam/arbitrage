@@ -1,5 +1,5 @@
 import { Pair } from "./types";
-import { createMap } from "./utils";
+import { createMap } from "../util/utils";
 
 export interface LiquidityInfo {
   pair: Pair;
