@@ -5,6 +5,7 @@ import { batch } from "../util/utils";
 import uniswapV2FactoryABI from "../abi/uniswap-v2-factory.json";
 import uniswapV2PairABI from "../abi/uniswap-v2-pair.json";
 import uniswapV2RouterABI from "../abi/uniswap-v2-router.json";
+import { Arbitrage } from "../arbitrage/arbitrage";
 
 export class UniswapV2 extends DEX {
   factory: string;
@@ -15,6 +16,7 @@ export class UniswapV2 extends DEX {
     super(name);
 
     this.factory = factory;
+    this.router = router;
     this.pairs = [];
   }
 
@@ -51,17 +53,18 @@ export class UniswapV2 extends DEX {
     );
   }
 
-  async getSwapTx(provider: ethers.providers.JsonRpcBatchProvider, input: bigint, path: string[], to: string) {
-    const router = new Contract(
-      this.router,
-      uniswapV2RouterABI,
-      provider
-    );
-    
+  async getSwapTx(
+    provider: ethers.providers.JsonRpcBatchProvider,
+    input: bigint,
+    path: Arbitrage[],
+    to: string
+  ) {
+    const router = new Contract(this.router, uniswapV2RouterABI, provider);
+
     const swapTx = await router.populateTransaction.swapExactTokensForTokens(
       input,
       input,
-      path,
+      path.map((arbitrage) => arbitrage.token),
       to,
       Math.floor(Date.now() / 1000) + 600 // 10 minutes from now
     );
@@ -110,6 +113,10 @@ export class UniswapV2Pair extends Pair {
 
     this.reserve0 = reserve0;
     this.reserve1 = reserve1;
+  }
+
+  isTradable() {
+    return this.reserve0 > 0 && this.reserve1 > 0;
   }
 
   getContract(provider: ethers.providers.JsonRpcBatchProvider) {

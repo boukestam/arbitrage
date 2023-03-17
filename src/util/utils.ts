@@ -64,3 +64,8 @@ function addItemToMap<T>(map: Map<string, T[]>, item: T, key: string) {
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(() => resolve(), ms));
 }
+
+export function bigintToHex(value: bigint, length: number) {
+  const s = value.toString(16);
+  return "0".repeat(length * 2 - s.length) + s;
+}

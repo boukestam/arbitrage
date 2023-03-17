@@ -1,12 +1,20 @@
 import { ethers, Contract, BigNumber } from "ethers";
 import { DEX, Pair } from "./types";
-import { batch } from "../util/utils";
+import { batch, bigintToHex } from "../util/utils";
 import { getEvents } from "../util/events";
+import {
+  getTickAtSqrtRatio,
+  getSqrtRatioAtTick,
+  getAmount0ForLiquidity,
+  getAmount1ForLiquidity,
+} from "../util/uniswap-v3-math";
 
 import uniswapV3FactoryABI from "../abi/uniswap-v3-factory.json";
 import uniswapV3PoolABI from "../abi/uniswap-v3-pool.json";
-import uniswapV2RouterABI from "../abi/uniswap-v2-router.json";
-import erc20ABI from "../abi/erc20.json";
+import uniswapV3RouterABI from "../abi/uniswap-v3-router.json";
+import { Arbitrage } from "../arbitrage/arbitrage";
+
+const PRICE_PRECISION = 10n ** 18n;
 
 export class UniswapV3 extends DEX {
   factory: string;
@@ -28,7 +36,15 @@ export class UniswapV3 extends DEX {
   async load(provider: ethers.providers.JsonRpcBatchProvider) {
     const factory = new Contract(this.factory, uniswapV3FactoryABI, provider);
 
-    const events = await getEvents(factory, ['PoolCreated'], 12369621, 16772418, 2500, 10, true);
+    const events = await getEvents(
+      factory,
+      ["PoolCreated"],
+      12369621,
+      16772418,
+      2500,
+      10,
+      true
+    );
 
     this.pairs = await batch(
       events,
@@ -38,31 +54,27 @@ export class UniswapV3 extends DEX {
 
         const token0 = event.args.token0;
         const token1 = event.args.token1;
-        const fee: BigNumber = event.args.fee
-        const tickSpacing: BigNumber = event.args.tickSpacing;
+        const fee = BigInt(event.args.fee.toString());
+        const tickSpacing = BigInt(event.args.tickSpacing.toString());
 
-        const token0Contract = new Contract(token0, erc20ABI, provider)
-        const token1Contract = new Contract(token1, erc20ABI, provider)
+        const slot0 = await pair.slot0();
+        const tick = BigInt(slot0.tick.toString());
 
-        let reserve0: BigNumber;
-        let reserve1: BigNumber;
-        
-        try {
-          reserve0 = await token0Contract.balanceOf(address);
-          reserve1 = await token1Contract.balanceOf(address);
-        } catch (e) {
-          reserve0 = BigNumber.from(0);
-          reserve1 = BigNumber.from(0);
-        }
+        const liquidity: BigNumber = await pair.liquidity();
+        const tickLiquidity: BigNumber = (
+          await pair.ticks(tick - (tick % tickSpacing))
+        ).liquidityGross;
 
         return new UniswapV3Pair(
           address,
           token0,
           token1,
-          reserve0.toBigInt(),
-          reserve1.toBigInt(),
-          BigInt(fee.toString()),
-          BigInt(tickSpacing.toString())
+          fee,
+          BigInt(slot0.sqrtPriceX96.toString()),
+          BigInt(liquidity.toString()),
+          tick,
+          tickSpacing,
+          BigInt(tickLiquidity.toString())
         );
       },
       1000,
@@ -70,22 +82,44 @@ export class UniswapV3 extends DEX {
     );
   }
 
-  async getSwapTx(provider: ethers.providers.JsonRpcBatchProvider, input: bigint, path: string[], to: string) {
-    const router = new Contract(
-      this.router,
-      uniswapV2RouterABI,
-      provider
-    );
-    
-    const swapTx = await router.populateTransaction.swapExactTokensForTokens(
-      input,
-      input,
-      path,
-      to,
-      Math.floor(Date.now() / 1000) + 600 // 10 minutes from now
-    );
+  async getSwapTx(
+    provider: ethers.providers.JsonRpcBatchProvider,
+    input: bigint,
+    path: Arbitrage[],
+    to: string
+  ) {
+    const router = new Contract(this.router, uniswapV3RouterABI, provider);
+
+    const swapTx = await router.populateTransaction.exactInput({
+      path: UniswapV3.encodePath(
+        path.map((arbitrage) => arbitrage.token),
+        path.slice(1).map((arbitrage) => (arbitrage.pair as UniswapV3Pair).fee)
+      ),
+      recipient: to,
+      deadline: Math.floor(Date.now() / 1000) + 600, // 10 minutes from now
+      amountIn: input,
+      amountOutMinimum: input,
+    });
 
     return swapTx;
+  }
+
+  static encodePath(path: string[], fees: bigint[]): string {
+    if (path.length != fees.length + 1) {
+      throw new Error("path/fee lengths do not match");
+    }
+
+    let encoded = "0x";
+    for (let i = 0; i < fees.length; i++) {
+      // 20 byte encoding of the address
+      encoded += String(path[i]).slice(2);
+      // 3 byte encoding of the fee
+      encoded += bigintToHex(fees[i], 3);
+    }
+    // encode the final token
+    encoded += path[path.length - 1].slice(2);
+
+    return encoded.toLowerCase();
   }
 
   toJSON() {
@@ -94,10 +128,12 @@ export class UniswapV3 extends DEX {
         address: pair.address,
         token0: pair.token0,
         token1: pair.token1,
-        reserve0: pair.reserve0.toString(),
-        reserve1: pair.reserve1.toString(),
         fee: pair.fee.toString(),
+        sqrtPriceX96: pair.sqrtPriceX96.toString(),
+        liquidity: pair.liquidity.toString(),
+        tick: pair.tick.toString(),
         tickSpacing: pair.tickSpacing.toString(),
+        tickLiquidity: pair.tickLiquidity.toString(),
       })),
     };
   }
@@ -109,10 +145,12 @@ export class UniswapV3 extends DEX {
           item.address,
           item.token0,
           item.token1,
-          BigInt(item.reserve0),
-          BigInt(item.reserve1),
           BigInt(item.fee),
-          BigInt(item.tickSpacing)
+          BigInt(item.sqrtPriceX96),
+          BigInt(item.liquidity),
+          BigInt(item.tick),
+          BigInt(item.tickSpacing),
+          BigInt(item.tickLiquidity)
         )
     );
   }
@@ -123,24 +161,69 @@ export class UniswapV3Pair extends Pair {
   reserve1: bigint;
 
   fee: bigint;
+  sqrtPriceX96: bigint;
+  liquidity: bigint;
+
+  tick: bigint;
   tickSpacing: bigint;
+  tickLiquidity: bigint;
+
+  price: bigint;
 
   constructor(
     address: string,
     token0: string,
     token1: string,
-    reserve0: bigint,
-    reserve1: bigint,
-    fee: bigint, 
-    tickSpacing: bigint
+    fee: bigint,
+    sqrtPriceX96: bigint,
+    liquidity: bigint,
+    tick: bigint,
+    tickSpacing: bigint,
+    tickLiquidity: bigint
   ) {
     super(address, token0, token1);
 
-    this.reserve0 = reserve0;
-    this.reserve1 = reserve1;
-
     this.fee = fee;
+    this.sqrtPriceX96 = sqrtPriceX96;
+    this.liquidity = liquidity;
+
+    this.tick = tick;
     this.tickSpacing = tickSpacing;
+    this.tickLiquidity = tickLiquidity;
+
+    if (sqrtPriceX96 > 0) {
+      const tickLower = this.tick - (this.tick % tickSpacing);
+      const tickUpper = tickLower + tickSpacing;
+
+      const sqrtRatioAX96 = getSqrtRatioAtTick(tickLower);
+      const sqrtRatioBX96 = getSqrtRatioAtTick(tickUpper);
+
+      this.reserve0 = getAmount0ForLiquidity(
+        sqrtRatioAX96,
+        sqrtRatioBX96,
+        liquidity
+      );
+      this.reserve1 = getAmount1ForLiquidity(
+        sqrtRatioAX96,
+        sqrtRatioBX96,
+        liquidity
+      );
+    } else {
+      this.reserve0 = 0n;
+      this.reserve1 = 0n;
+    }
+
+    this.price = UniswapV3Pair.getPriceFromSqrtPriceX96(sqrtPriceX96);
+  }
+
+  isTradable() {
+    return (
+      this.liquidity > 0 &&
+      this.reserve0 > 0 &&
+      this.reserve1 > 0 &&
+      this.tickLiquidity != this.liquidity &&
+      this.price > 0
+    );
   }
 
   getContract(provider: ethers.providers.JsonRpcBatchProvider) {
@@ -148,48 +231,32 @@ export class UniswapV3Pair extends Pair {
   }
 
   async reload(provider: ethers.providers.JsonRpcBatchProvider) {
-    const contract = this.getContract(provider);
-    
-    const reserve0: BigNumber = await contract.balance0();
-    const reserve1: BigNumber = await contract.balance1();
+    const contract = new Contract(this.address, uniswapV3PoolABI, provider);
 
-    this.reserve0 = reserve0.toBigInt();
-    this.reserve1 = reserve1.toBigInt();
+    const slot0 = await contract.slot0();
+
+    this.sqrtPriceX96 = BigInt(slot0.sqrtPriceX96.toString());
+    this.price = UniswapV3Pair.getPriceFromSqrtPriceX96(this.sqrtPriceX96);
   }
 
   convert(token: string, amount: bigint): bigint {
-    if (token === this.token0) {
-      if (this.reserve0 === 0n) throw new Error("Zero reserve");
-      return (this.reserve1 * amount) / this.reserve0;
+    if (this.reserve0 === 0n || this.reserve1 === 0n)
+      throw new Error("Zero reserve");
+
+    if (this.price === 0n) {
+      throw new Error("Zero price");
     }
 
-    if (token === this.token1) {
-      if (this.reserve1 === 0n) throw new Error("Zero reserve");
-      return (this.reserve0 * amount) / this.reserve1;
-    }
+    if (token === this.token0) return (this.price * amount) / PRICE_PRECISION;
+    if (token === this.token1) return (amount * PRICE_PRECISION) / this.price;
 
     throw new Error("Invalid token for pair");
   }
 
   swap(token: string, amount: bigint): bigint {
-    if (this.reserve0 === 0n || this.reserve1 === 0n)
-      throw new Error("Zero reserve");
-
-    const amountWithFee = amount * (BigInt(1e6) - this.fee);
-
-    if (token === this.token0) {
-      const numerator = amountWithFee * this.reserve1;
-      const denominator = this.reserve0 * BigInt(1e6) + amountWithFee;
-      return numerator / denominator;
-    }
-
-    if (token === this.token1) {
-      const numerator = amountWithFee * this.reserve0;
-      const denominator = this.reserve1 * BigInt(1e6) + amountWithFee;
-      return numerator / denominator;
-    }
-
-    throw new Error("Invalid token for pair");
+    return (
+      (this.convert(token, amount) * (BigInt(1e6) - this.fee)) / BigInt(1e6)
+    );
   }
 
   reserve(token: string): bigint {
@@ -197,5 +264,9 @@ export class UniswapV3Pair extends Pair {
     if (token === this.token1) return this.reserve1;
 
     throw new Error("Invalid token for pair");
+  }
+
+  static getPriceFromSqrtPriceX96(sqrtPriceX96: bigint): bigint {
+    return (sqrtPriceX96 * sqrtPriceX96 * PRICE_PRECISION) >> 192n;
   }
 }

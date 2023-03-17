@@ -1,4 +1,5 @@
 import ethers from "ethers";
+import { Arbitrage } from "../arbitrage/arbitrage";
 
 export type DEXType = "uniswap-v2";
 
@@ -12,11 +13,11 @@ export abstract class DEX {
   abstract getPairs(): Pair[];
 
   abstract load(provider: ethers.providers.JsonRpcBatchProvider): void;
-  
+
   abstract getSwapTx(
-    provider: ethers.providers.JsonRpcBatchProvider, 
-    input: bigint, 
-    path: string[], 
+    provider: ethers.providers.JsonRpcBatchProvider,
+    input: bigint,
+    path: Arbitrage[],
     to: string
   ): Promise<ethers.PopulatedTransaction>;
 
@@ -34,6 +35,8 @@ export abstract class Pair {
     this.token0 = token0;
     this.token1 = token1;
   }
+
+  abstract isTradable(): boolean;
 
   abstract reload(
     provider: ethers.providers.JsonRpcBatchProvider

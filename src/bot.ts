@@ -4,7 +4,7 @@ import { DEX, Pair } from "./exchanges/types";
 import fs from "fs";
 import { loadTokens, TokenInfo } from "./tokens";
 import { batch, sleep } from "./util/utils";
-import { findLiquidPairs } from "./exchanges/liquidity";
+import { findLiquidPairs, LiquidityInfo } from "./exchanges/liquidity";
 import {
   executeFlashLoanArbitrage,
   verifyFlashLoanArbitrage,
@@ -36,6 +36,9 @@ export class Bot {
   pairs: Pair[] = [];
   tokens = new Map<string, TokenInfo>();
 
+  ethPrice: bigint;
+  minLiquidityInUSDT: bigint;
+
   constructor(
     provider: ethers.providers.JsonRpcBatchProvider,
     dexes: DEX[],
@@ -44,6 +47,11 @@ export class Bot {
     this.provider = provider;
     this.dexes = dexes;
     this.stable = stable;
+
+    this.ethPrice = BigInt(process.env.ETH_PRICE as string);
+    this.minLiquidityInUSDT = BigInt(
+      process.env.MIN_LIQUIDITY_IN_USDT as string
+    );
   }
 
   async load() {
@@ -78,18 +86,13 @@ export class Bot {
   }
 
   async run() {
-    const ETH_PRICE = BigInt(process.env.ETH_PRICE as string);
-    const minLiquidityInUSDT = BigInt(
-      process.env.MIN_LIQUIDITY_IN_USDT as string
-    );
-
     let nextBlock = (await this.provider.getBlockNumber()) + 1;
 
     console.log("Finding liquid pairs");
     let initialLiquidPairs = findLiquidPairs(
       this.pairs,
       this.stable,
-      minLiquidityInUSDT / 2n
+      this.minLiquidityInUSDT / 2n
     );
     console.log("Initial liquid pairs: " + initialLiquidPairs.length);
 
@@ -103,7 +106,7 @@ export class Bot {
     let liquidPairs = findLiquidPairs(
       initialLiquidPairs.map((pair) => pair.pair),
       this.stable,
-      minLiquidityInUSDT
+      this.minLiquidityInUSDT
     );
     console.log("Final liquid pairs: " + liquidPairs.length);
 
@@ -121,8 +124,6 @@ export class Bot {
 
       const latestBlock = await this.provider.getBlock("latest");
       while (nextBlock <= latestBlock.number) {
-        console.log("Scanning block " + nextBlock + "...");
-
         const block = await this.provider.getBlockWithTransactions(nextBlock);
 
         const receipts = await batch(
@@ -144,164 +145,205 @@ export class Bot {
       }
 
       if (pairsToUpdate.size > 0) {
-        console.log("Updating " + pairsToUpdate.size + " pairs...");
-
         await batch(
           Array.from(pairsToUpdate.values()),
           (pair) => pair.reload(this.provider),
           1000
         );
+
+        const arbitragePairs = findLiquidPairs(
+          liquidPairs.map((pair) => pair.pair),
+          this.stable,
+          this.minLiquidityInUSDT
+        );
+
+        await this.findArbitrages(arbitragePairs, nextBlock);
       }
 
-      const arbitragePairs = findLiquidPairs(
-        liquidPairs.map((pair) => pair.pair),
-        this.stable,
-        minLiquidityInUSDT
-      );
+      // 12 seconds is the average block time
+      let sleepTime = latestBlock.timestamp * 1000 + 12000 - Date.now();
+      sleepTime = Math.max(sleepTime, 1000); // sleep at least 1 second
+      await sleep(sleepTime);
+    }
+  }
 
-      const arbitrager = new CircularArbitrager(arbitragePairs);
+  async findArbitrages(arbitragePairs: LiquidityInfo[], nextBlock: number) {
+    const arbitrager = new CircularArbitrager(arbitragePairs);
 
-      const arbitrages = arbitrager.find(starters);
+    const arbitrages = arbitrager.find(starters);
 
-      const results = await batch(
-        arbitrages,
-        async (arbitrage) => {
-          const token = this.tokens.get(arbitrage.token);
+    arbitrages.sort(
+      (a, b) => b.getProfitPercentage() - a.getProfitPercentage()
+    );
 
-          const pool = starters.find(
-            (starter) => starter.address === arbitrage.token
-          );
+    // console.log("Found " + arbitrages.length + " arbitrages");
 
-          const { input, output } = arbitrager.findOptimalAmounts(
-            arbitrage,
-            pool.fee
-          );
+    // for (const arbitrage of arbitrages.slice(0, 10)) {
+    //   console.log(arbitrage.toString(this.tokens));
+    // }
 
-          try {
-            const { profit, gas, args } = await verifyFlashLoanArbitrage(
-              this.provider,
-              input,
-              arbitrage.getPath(),
-              pool.v3Pool,
-              pool.isToken0,
-              pool.fee
-            );
+    const results = await batch(
+      arbitrages,
+      async (arbitrage) => {
+        const token = this.tokens.get(arbitrage.token);
 
-            return { token, pool, input, profit, gas, args };
-          } catch (e) {
-            return null;
-          }
-        },
-        100
-      );
+        const pool = starters.find(
+          (starter) => starter.address === arbitrage.token
+        );
 
-      const gasData = await this.provider.getFeeData();
-
-      const profitableArbitrages: ProfitableArbitrage[] = [];
-
-      for (let i = 0; i < arbitrages.length; i++) {
-        const arbitrage = arbitrages[i];
-        const result = results[i];
-
-        if (!result) continue;
-
-        const { token, pool, input, profit, gas, args } = result;
-
-        const minLiquidityOfToken =
-          arbitragePairs.find((pair) => pair.pair.token0 === token.address)
-            ?.minAmount0 ||
-          arbitragePairs.find((pair) => pair.pair.token1 === token.address)
-            ?.minAmount1;
-
-        const profitInUSD = (profit * minLiquidityInUSDT) / minLiquidityOfToken;
-
-        const gasPrice = gasData.gasPrice.toBigInt();
-        const gasInETH = gas * gasPrice;
-        const gasInUSD = (gasInETH * ETH_PRICE) / BigInt(1e12);
-
-        const netProfitInUSD = profitInUSD - gasInUSD;
-
-        if (netProfitInUSD < 0) continue;
-
-        const gasInToken = (profit * gasInUSD) / profitInUSD;
-
-        const info: ProfitableArbitrage = {
+        const { input, output } = arbitrager.findOptimalAmounts(
           arbitrage,
-          input,
-          token,
-          profit,
-          profitInUSD,
-          gasInETH,
-          gasInUSD,
-          gasInToken,
-          netProfitInUSD,
-          gasLimit: gas,
-          gasPrice: gasPrice,
-          args,
-        };
-
-        profitableArbitrages.push(info);
-      }
-
-      if (profitableArbitrages.length > 0) {
-        profitableArbitrages.sort((a, b) =>
-          Number(b.netProfitInUSD - a.netProfitInUSD)
-        );
-
-        const exeuctionProvider = new ethers.providers.JsonRpcProvider(
-          process.env.EXECUTION_RPC as string
-        );
-        const executionWallet = new Wallet(
-          process.env.PRIVATE_KEY as string,
-          exeuctionProvider
-        );
-
-        const arbitrage = profitableArbitrages[0];
-
-        console.log("Time: " + new Date().toLocaleString());
-        console.log(arbitrage.arbitrage.toString(this.tokens));
-        console.log(
-          "Optimal input: " +
-            formatUnits(arbitrage.input, arbitrage.token.decimals) +
-            " " +
-            arbitrage.token.symbol
-        );
-        console.log(
-          "Profit: " +
-            formatUnits(arbitrage.profit, arbitrage.token.decimals) +
-            " " +
-            arbitrage.token.symbol
-        );
-        console.log("Profit in USD: " + formatUnits(arbitrage.profitInUSD, 6));
-        console.log(
-          "Gas fee in USD: " +
-            parseFloat(formatUnits(arbitrage.gasInUSD, 6)).toFixed(2) +
-            " " +
-            arbitrage.token.symbol
+          pool.fee
         );
 
         try {
-          const receipt = await executeFlashLoanArbitrage(
-            executionWallet,
-            arbitrage.args,
-            arbitrage.gasInToken,
-            arbitrage.gasLimit,
-            arbitrage.gasPrice
+          const { profit, gas, args } = await verifyFlashLoanArbitrage(
+            this.provider,
+            this.dexes[0],
+            input,
+            arbitrage.getPath(),
+            pool.v3Pool,
+            pool.isToken0,
+            pool.fee
           );
 
-          console.log("Arbitrage successfull");
-          console.log(receipt);
+          return { token, pool, input, profit, gas, args };
         } catch (e) {
-          console.log("Arbitrage failed");
-          console.error(e);
+          return null;
         }
+      },
+      100
+    );
+
+    const gasData = await this.provider.getFeeData();
+
+    const profitableArbitrages: ProfitableArbitrage[] = [];
+
+    for (let i = 0; i < arbitrages.length; i++) {
+      const arbitrage = arbitrages[i];
+      const result = results[i];
+
+      if (!result) continue;
+
+      const { token, pool, input, profit, gas, args } = result;
+
+      const minLiquidityOfToken =
+        arbitragePairs.find((pair) => pair.pair.token0 === token.address)
+          ?.minAmount0 ||
+        arbitragePairs.find((pair) => pair.pair.token1 === token.address)
+          ?.minAmount1;
+
+      const profitInUSD =
+        (profit * this.minLiquidityInUSDT) / minLiquidityOfToken;
+
+      const gasPrice = gasData.gasPrice.toBigInt();
+      const gasInETH = gas * gasPrice;
+      const gasInUSD = (gasInETH * this.ethPrice) / BigInt(1e12);
+
+      const netProfitInUSD = profitInUSD - gasInUSD;
+
+      if (netProfitInUSD < 0) continue;
+
+      const gasInToken = (profit * gasInUSD) / profitInUSD;
+
+      const info: ProfitableArbitrage = {
+        arbitrage,
+        input,
+        token,
+        profit,
+        profitInUSD,
+        gasInETH,
+        gasInUSD,
+        gasInToken,
+        netProfitInUSD,
+        gasLimit: gas,
+        gasPrice: gasPrice,
+        args,
+      };
+
+      profitableArbitrages.push(info);
+    }
+
+    if (profitableArbitrages.length > 0) {
+      profitableArbitrages.sort((a, b) =>
+        Number(b.netProfitInUSD - a.netProfitInUSD)
+      );
+
+      const wallet = new Wallet(
+        process.env.PRIVATE_KEY as string,
+        this.provider
+      );
+
+      const arbitrage = profitableArbitrages[0];
+
+      console.log("Time: " + new Date().toLocaleString());
+      console.log(arbitrage.arbitrage.toString(this.tokens));
+      console.log(
+        "Optimal input: " +
+          formatUnits(arbitrage.input, arbitrage.token.decimals) +
+          " " +
+          arbitrage.token.symbol
+      );
+      console.log(
+        "Profit: " +
+          formatUnits(arbitrage.profit, arbitrage.token.decimals) +
+          " " +
+          arbitrage.token.symbol
+      );
+      console.log("Profit in USD: " + formatUnits(arbitrage.profitInUSD, 6));
+      console.log("Gas fee in USD: " + formatUnits(arbitrage.gasInUSD, 6));
+
+      console.log(
+        "Minimum output: " +
+          formatUnits(arbitrage.gasInToken, arbitrage.token.decimals) +
+          " " +
+          arbitrage.token.symbol
+      );
+
+      let minerRewardInETH = 0n;
+
+      // Increase the gas if there is a big profit
+      if (arbitrage.netProfitInUSD > 10000000n) {
+        const minerRewardInUSD = arbitrage.netProfitInUSD - 10000000n;
+
+        minerRewardInETH =
+          (arbitrage.gasInETH * minerRewardInUSD) / arbitrage.gasInUSD;
+
+        arbitrage.gasInToken =
+          (arbitrage.gasInToken * (arbitrage.gasInUSD + minerRewardInUSD)) /
+          arbitrage.gasInUSD;
+
+        console.log("Miner reward in USD: " + formatUnits(minerRewardInUSD, 6));
+        console.log(
+          "Miner reward in ETH: " + formatUnits(minerRewardInETH, 18)
+        );
+
+        console.log(
+          "Increased minimum output: " +
+            formatUnits(arbitrage.gasInToken, arbitrage.token.decimals) +
+            " " +
+            arbitrage.token.symbol
+        );
       }
 
-      // 12 seconds is the average block time, 4 seconds grace period
-      let sleepTime = latestBlock.timestamp * 1000 + 16000 - Date.now();
-      sleepTime = Math.max(sleepTime, 1000); // sleep at least 1 second
-      console.log("Sleeping for " + sleepTime + " ms...");
-      await sleep(sleepTime);
+      try {
+        const receipts = await executeFlashLoanArbitrage(
+          this.provider,
+          wallet,
+          arbitrage.args,
+          arbitrage.gasInToken,
+          nextBlock,
+          arbitrage.gasLimit,
+          arbitrage.gasPrice,
+          minerRewardInETH
+        );
+
+        console.log("Arbitrage successfull");
+        console.log(receipts);
+      } catch (e) {
+        console.log("Arbitrage failed");
+        console.error(e);
+      }
     }
   }
 }

@@ -351,6 +351,11 @@
     "@ethersproject/properties" "^5.7.0"
     "@ethersproject/strings" "^5.7.0"
 
+"@flashbots/ethers-provider-bundle@^0.6.1":
+  version "0.6.1"
+  resolved "https://registry.yarnpkg.com/@flashbots/ethers-provider-bundle/-/ethers-provider-bundle-0.6.1.tgz#30b0ff86d1b96e10c34f3dcba774b8908edb7f12"
+  integrity sha512-W7tSX832mi7XKlbg4dIMzV1HMw5Dg0ox0YOqPxW2nO2JqsAZwWYFrAk4nNZnsqRdexHiPF4JUYez/ELI5VpScA==
+
 "@jridgewell/resolve-uri@^3.0.3":
   version "3.1.0"
   resolved "https://registry.yarnpkg.com/@jridgewell/resolve-uri/-/resolve-uri-3.1.0.tgz#2203b118c157721addfe69d47b70465463066d78"

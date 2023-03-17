@@ -1,14 +1,23 @@
-import { ethers, BigNumber, Contract, Wallet } from "ethers";
+import {
+  ethers,
+  BigNumber,
+  Contract,
+  Wallet,
+  PopulatedTransaction,
+} from "ethers";
 import { Arbitrage } from "./arbitrage";
-import { UniswapV2Pair } from "../exchanges//uniswap-v2";
+import { UniswapV2, UniswapV2Pair } from "../exchanges/uniswap-v2";
 
 import arbitrageABI from "../abi/arbitrage.json";
 import erc20ABI from "../abi/erc20.json";
 import { AbiCoder } from "ethers/lib/utils";
 import { mulDivRoundingUp } from "../util/math";
+import { DEX } from "../exchanges/types";
+import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
 
 export async function verifyFlashLoanArbitrage(
   provider: ethers.providers.JsonRpcBatchProvider,
+  exchange: DEX,
   input: bigint,
   path: Arbitrage[],
   flashPool: string,
@@ -21,39 +30,40 @@ export async function verifyFlashLoanArbitrage(
 }> {
   const ADDRESS = process.env.ADDRESS as string;
   const FLASH_CONTRACT = process.env.FLASH_CONTRACT as string;
-
   const owner = ADDRESS;
-  const flash = new Contract(FLASH_CONTRACT, arbitrageABI, provider);
 
+  const flash = new Contract(FLASH_CONTRACT, arbitrageABI, provider);
   const token = new Contract(path[0].token, erc20ABI, provider);
 
-  const pairInstance = path[1].pair instanceof UniswapV2Pair;
+  const transactions: PopulatedTransaction[] = [];
 
-  //const swapTx = 
+  // ---------------------------------------
 
-  // const approveRouterTx = await token.populateTransaction.approve(
-  //   swapTx.to,
-  //   input
-  // );
+  const swapTx = await exchange.getSwapTx(provider, input, path, flash.address);
 
-  const feeAmount = Arbitrage.calculateFee(input, fee);
+  const approveRouterTx = await token.populateTransaction.approve(
+    swapTx.to,
+    input
+  );
 
-  const repayTx = await token.populateTransaction.transfer(
-    flashPool,
-    input + feeAmount
+  transactions.push(approveRouterTx);
+  transactions.push(swapTx);
+
+  // ---------------------------------------
+
+  // Repay flash loan
+  transactions.push(
+    await token.populateTransaction.transfer(
+      flashPool,
+      input + Arbitrage.calculateFee(input, fee)
+    )
   );
 
   const abiCoder = new AbiCoder();
 
   const data = abiCoder.encode(
     ["tuple(address to, uint256 value, bytes data)[]"],
-    [
-      [
-        //[approveRouterTx.to, 0, approveRouterTx.data],
-        //[swapTx.to, 0, swapTx.data],
-        [repayTx.to, 0, repayTx.data],
-      ],
-    ]
+    [transactions.map((tx) => [tx.to, 0, tx.data])]
   );
 
   const loan0 = isToken0 ? input : 0;
@@ -77,11 +87,14 @@ export async function verifyFlashLoanArbitrage(
 }
 
 export async function executeFlashLoanArbitrage(
-  provider: Wallet,
+  provider: ethers.providers.BaseProvider,
+  wallet: Wallet,
   args: any[],
   minProfit: bigint,
+  block: number,
   gasLimit: bigint,
-  gasPrice: bigint
+  gasPrice: bigint,
+  minerReward: bigint
 ) {
   const FLASH_CONTRACT = process.env.FLASH_CONTRACT as string;
 
@@ -89,15 +102,34 @@ export async function executeFlashLoanArbitrage(
 
   args[2] = minProfit;
 
-  const tx = await flash.uniswapV3Flash(...args, {
+  const tx = await flash.populateTransaction.uniswapV3Flash(...args, {
     gasLimit: gasLimit,
     gasPrice: gasPrice,
+    value: minerReward,
   });
-  const receipt = await provider.provider.waitForTransaction(
-    tx.hash,
-    1,
-    360000
-  ); // 6 minutes
 
-  return receipt;
+  const flashbotsProvider = await FlashbotsBundleProvider.create(
+    provider,
+    wallet
+  );
+
+  const signedBundle = await flashbotsProvider.signBundle([
+    {
+      signer: wallet,
+      transaction: tx,
+    },
+  ]);
+
+  const receipt = await flashbotsProvider.sendRawBundle(signedBundle, block);
+
+  const bundlePromises = [block, block + 2].map((targetBlockNumber) =>
+    flashbotsProvider.sendRawBundle(signedBundle, targetBlockNumber)
+  );
+  const bundles: any[] = await Promise.all(bundlePromises);
+
+  const results = await Promise.allSettled(
+    bundles.map((bundle) => bundle.wait())
+  );
+
+  return results;
 }
