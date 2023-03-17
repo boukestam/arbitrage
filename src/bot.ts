@@ -300,23 +300,20 @@ export class Bot {
           arbitrage.token.symbol
       );
 
-      let minerRewardInETH = 0n;
-
       // Increase the gas if there is a big profit
-      if (arbitrage.netProfitInUSD > 10000000n) {
-        const minerRewardInUSD = arbitrage.netProfitInUSD - 10000000n;
+      if (arbitrage.netProfitInUSD > 5000000n) {
+        const minerRewardInUSD = arbitrage.netProfitInUSD - 5000000n;
 
-        minerRewardInETH =
-          (arbitrage.gasInETH * minerRewardInUSD) / arbitrage.gasInUSD;
+        arbitrage.gasPrice =
+          (arbitrage.gasPrice * (arbitrage.gasInUSD + minerRewardInUSD)) /
+          arbitrage.gasInUSD;
 
         arbitrage.gasInToken =
           (arbitrage.gasInToken * (arbitrage.gasInUSD + minerRewardInUSD)) /
           arbitrage.gasInUSD;
 
         console.log("Miner reward in USD: " + formatUnits(minerRewardInUSD, 6));
-        console.log(
-          "Miner reward in ETH: " + formatUnits(minerRewardInETH, 18)
-        );
+        console.log("Gas price: " + formatUnits(arbitrage.gasPrice, 9));
 
         console.log(
           "Increased minimum output: " +
@@ -335,7 +332,7 @@ export class Bot {
           nextBlock,
           arbitrage.gasLimit,
           arbitrage.gasPrice,
-          minerRewardInETH
+          0n
         );
 
         console.log("Arbitrage successfull");

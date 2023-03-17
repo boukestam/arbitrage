@@ -120,16 +120,18 @@ export async function executeFlashLoanArbitrage(
     },
   ]);
 
-  const receipt = await flashbotsProvider.sendRawBundle(signedBundle, block);
-
-  const bundlePromises = [block, block + 2].map((targetBlockNumber) =>
+  const bundlePromises = [block, block + 1].map((targetBlockNumber) =>
     flashbotsProvider.sendRawBundle(signedBundle, targetBlockNumber)
   );
   const bundles: any[] = await Promise.all(bundlePromises);
 
-  const results = await Promise.allSettled(
-    bundles.map((bundle) => bundle.wait())
+  const simulations = await Promise.allSettled(
+    bundles.map((bundle) => bundle.simulate())
   );
 
-  return results;
+  const receipts = await Promise.allSettled(
+    bundles.map((bundle) => bundle.receipts())
+  );
+
+  return { receipts, simulations };
 }
