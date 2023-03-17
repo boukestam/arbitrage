@@ -1,5 +1,5 @@
 import { mulDivRoundingUp } from "../util/math";
-import { TokenInfo } from "../tokens";
+import { TokenInfo } from "../bot/tokens";
 import { Pair } from "../exchanges/types";
 
 export class Arbitrage {
@@ -37,8 +37,8 @@ export class Arbitrage {
     return Number((this.amount * 10000n) / this.getPath()[0].amount) / 100;
   }
 
-  static calculateFee(amount: bigint, fee: number) {
-    return mulDivRoundingUp(amount, BigInt(fee), BigInt(1e6));
+  static calculateFee(amount: bigint, fee: bigint) {
+    return mulDivRoundingUp(amount, fee, BigInt(1e6));
   }
 
   toString(tokens: Map<string, TokenInfo>) {

@@ -1,17 +1,17 @@
 import { ethers, Wallet } from "ethers";
-import { CircularArbitrager } from "./arbitrage/circular-arbitrager";
-import { DEX, Pair } from "./exchanges/types";
-import fs from "fs";
+import { CircularArbitrager } from "../arbitrage/circular-arbitrager";
+import { DEX, Pair } from "../exchanges/types";
 import { loadTokens, TokenInfo } from "./tokens";
-import { batch, sleep } from "./util/utils";
-import { findLiquidPairs, LiquidityInfo } from "./exchanges/liquidity";
+import { batch, sleep } from "../util/utils";
+import { findLiquidPairs, LiquidityInfo } from "../exchanges/liquidity";
 import {
   executeFlashLoanArbitrage,
   verifyFlashLoanArbitrage,
-} from "./arbitrage/flash-loan";
-import { blocked, starters } from "./config";
+} from "../arbitrage/flash-loan";
+import { blocked, constants } from "./config";
 import { formatUnits } from "ethers/lib/utils";
-import { Arbitrage } from "./arbitrage/arbitrage";
+import { Arbitrage } from "../arbitrage/arbitrage";
+import { StartToken } from "../arbitrage/starters";
 
 interface ProfitableArbitrage {
   arbitrage: Arbitrage;
@@ -29,9 +29,10 @@ interface ProfitableArbitrage {
 }
 
 export class Bot {
-  provider: ethers.providers.JsonRpcBatchProvider;
+  provider: ethers.providers.BaseProvider;
   dexes: DEX[];
   stable: string;
+  starters: StartToken[];
 
   pairs: Pair[] = [];
   tokens = new Map<string, TokenInfo>();
@@ -40,34 +41,23 @@ export class Bot {
   minLiquidityInUSDT: bigint;
 
   constructor(
-    provider: ethers.providers.JsonRpcBatchProvider,
+    provider: ethers.providers.BaseProvider,
     dexes: DEX[],
-    stable: string
+    stable: string,
+    starters: StartToken[]
   ) {
     this.provider = provider;
     this.dexes = dexes;
     this.stable = stable;
+    this.starters = starters;
 
-    this.ethPrice = BigInt(process.env.ETH_PRICE as string);
-    this.minLiquidityInUSDT = BigInt(
-      process.env.MIN_LIQUIDITY_IN_USDT as string
-    );
+    this.ethPrice = constants.ETH_PRICE;
+    this.minLiquidityInUSDT = constants.MIN_LIQUIDITY_IN_USDT;
   }
 
   async load() {
     for (const dex of this.dexes) {
-      const file = "data/" + dex.name + ".json";
-
-      console.log("Loading dex: " + dex.name + "...");
-
-      if (fs.existsSync(file)) {
-        const json = JSON.parse(fs.readFileSync(file).toString());
-        dex.fromJSON(json);
-      } else {
-        await dex.load(this.provider);
-        const json = dex.toJSON();
-        fs.writeFileSync(file, JSON.stringify(json));
-      }
+      await dex.loadFromFile(this.provider);
 
       for (const pair of dex.getPairs()) {
         this.pairs.push(pair);
@@ -170,24 +160,24 @@ export class Bot {
   async findArbitrages(arbitragePairs: LiquidityInfo[], nextBlock: number) {
     const arbitrager = new CircularArbitrager(arbitragePairs);
 
-    const arbitrages = arbitrager.find(starters);
+    const arbitrages = arbitrager.find(this.starters);
 
     arbitrages.sort(
       (a, b) => b.getProfitPercentage() - a.getProfitPercentage()
     );
 
-    // console.log("Found " + arbitrages.length + " arbitrages");
+    console.log("Found " + arbitrages.length + " arbitrages");
 
-    // for (const arbitrage of arbitrages.slice(0, 10)) {
-    //   console.log(arbitrage.toString(this.tokens));
-    // }
+    for (const arbitrage of arbitrages.slice(0, 10)) {
+      console.log(arbitrage.toString(this.tokens));
+    }
 
     const results = await batch(
       arbitrages,
       async (arbitrage) => {
         const token = this.tokens.get(arbitrage.token);
 
-        const pool = starters.find(
+        const pool = this.starters.find(
           (starter) => starter.address === arbitrage.token
         );
 
@@ -270,7 +260,7 @@ export class Bot {
       );
 
       const wallet = new Wallet(
-        process.env.PRIVATE_KEY as string,
+        constants.PRIVATE_KEY,
         this.provider
       );
 

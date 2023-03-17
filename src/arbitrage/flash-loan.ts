@@ -6,33 +6,28 @@ import {
   PopulatedTransaction,
 } from "ethers";
 import { Arbitrage } from "./arbitrage";
-import { UniswapV2, UniswapV2Pair } from "../exchanges/uniswap-v2";
+import { AbiCoder } from "ethers/lib/utils";
+import { DEX } from "../exchanges/types";
+import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
+import { constants } from "../bot/config";
 
 import arbitrageABI from "../abi/arbitrage.json";
 import erc20ABI from "../abi/erc20.json";
-import { AbiCoder } from "ethers/lib/utils";
-import { mulDivRoundingUp } from "../util/math";
-import { DEX } from "../exchanges/types";
-import { FlashbotsBundleProvider } from "@flashbots/ethers-provider-bundle";
 
 export async function verifyFlashLoanArbitrage(
-  provider: ethers.providers.JsonRpcBatchProvider,
+  provider: ethers.providers.BaseProvider,
   exchange: DEX,
   input: bigint,
   path: Arbitrage[],
   flashPool: string,
   isToken0: boolean,
-  fee: number
+  fee: bigint
 ): Promise<{
   profit: bigint;
   gas: bigint;
   args: any[];
 }> {
-  const ADDRESS = process.env.ADDRESS as string;
-  const FLASH_CONTRACT = process.env.FLASH_CONTRACT as string;
-  const owner = ADDRESS;
-
-  const flash = new Contract(FLASH_CONTRACT, arbitrageABI, provider);
+  const flash = new Contract(constants.FLASH_CONTRACT, arbitrageABI, provider);
   const token = new Contract(path[0].token, erc20ABI, provider);
 
   const transactions: PopulatedTransaction[] = [];
@@ -76,11 +71,11 @@ export async function verifyFlashLoanArbitrage(
   // console.log(response);
 
   const profit: BigNumber = await flash.callStatic.uniswapV3Flash(...args, {
-    from: owner,
+    from: constants.ADDRESS,
   });
 
   const gas: BigNumber = await flash.estimateGas.uniswapV3Flash(...args, {
-    from: owner,
+    from: constants.ADDRESS,
   });
 
   return { profit: profit.toBigInt(), gas: gas.toBigInt(), args };
@@ -96,9 +91,7 @@ export async function executeFlashLoanArbitrage(
   gasPrice: bigint,
   minerReward: bigint
 ) {
-  const FLASH_CONTRACT = process.env.FLASH_CONTRACT as string;
-
-  const flash = new Contract(FLASH_CONTRACT, arbitrageABI, provider);
+  const flash = new Contract(constants.FLASH_CONTRACT, arbitrageABI, provider);
 
   args[2] = minProfit;
 

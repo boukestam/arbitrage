@@ -1,10 +1,10 @@
 import { ethers } from "ethers";
 import { Arbitrage } from "./arbitrage";
-import { StartToken } from "../config";
 import { LiquidityInfo } from "../exchanges/liquidity";
 import { percentage } from "../util/math";
 import { Pair } from "../exchanges/types";
 import { batch, createMap } from "../util/utils";
+import { StartToken } from "./starters";
 
 export class CircularArbitrager {
   pairs: LiquidityInfo[];
@@ -25,6 +25,8 @@ export class CircularArbitrager {
 
     for (const token of starters) {
       const pairs = this.pairsByToken.get(token.address);
+      if (!pairs) continue;
+
       const minAmount =
         pairs[0].pair.token0 === token.address
           ? pairs[0].minAmount0
@@ -93,7 +95,7 @@ export class CircularArbitrager {
     return arbitrages;
   }
 
-  getOutput(arbitrage: Arbitrage, input: bigint, fee: number) {
+  getOutput(arbitrage: Arbitrage, input: bigint, fee: bigint) {
     const path = arbitrage.getPath();
 
     let amount = input;
@@ -108,7 +110,7 @@ export class CircularArbitrager {
     return amount - input - Arbitrage.calculateFee(input, fee);
   }
 
-  findOptimalAmounts(arbitrage: Arbitrage, fee: number) {
+  findOptimalAmounts(arbitrage: Arbitrage, fee: bigint) {
     const path = arbitrage.getPath();
 
     let input = path[0].amount;
