@@ -1,12 +1,12 @@
 import { ethers } from "ethers";
 import { UniswapV2 } from "./exchanges/uniswap-v2";
-import { Bot } from "./bot";
+import { Bot } from "./bot/bot";
 import { UniswapV3 } from "./exchanges/uniswap-v3";
-
-require("dotenv").config();
+import { constants } from "./bot/config";
+import { getStarters } from "./arbitrage/starters";
 
 const provider = new ethers.providers.JsonRpcBatchProvider(
-  process.env.SCAN_RPC as string
+  constants.SCAN_RPC
 );
 
 process.on("uncaughtException", (exception) => {
@@ -39,14 +39,26 @@ const uniswapV3 = new UniswapV3(
   "0xE592427A0AEce92De3Edee1F18E0157C05861564"
 );
 
-const bot = new Bot(
-  provider,
-  [
-    uniswapV2,
-    //sushiSwap,
-    //uniswapV3,
-  ],
-  process.env.STABLE_COIN as string
-);
+async function main() {
+  await uniswapV3.loadFromFile(provider);
 
-bot.load().then(() => bot.run());
+  const starters = getStarters(uniswapV3);
+
+  console.log("Found " + starters.length + " starters");
+
+  const bot = new Bot(
+    provider,
+    [
+      uniswapV2,
+      sushiSwap,
+      //uniswapV3,
+    ],
+    constants.STABLE_COIN,
+    starters
+  );
+
+  await bot.load();
+  await bot.run();
+}
+
+main();

@@ -1,0 +1,31 @@
+require("dotenv").config();
+
+export const blocked = new Set<string>([
+  // Taxed
+  "0xCc802c45B55581713cEcd1Eb17BE9Ab7fcCb0844", // BHNY
+  "0x131157c6760f78f7dDF877C0019Eba175BA4b6F6", // BigSB
+  "0x73A83269b9bbAFC427E76Be0A2C1a1db2a26f4C2", // CIV
+  "0x7101a9392EAc53B01e7c07ca3baCa945A56EE105", // X7101
+  "0x7102DC82EF61bfB0410B1b1bF8EA74575bf0A105", // X7102
+  "0x7103eBdbF1f89be2d53EFF9B3CF996C9E775c105", // X7103
+  "0x7104D1f179Cc9cc7fb5c79Be6Da846E3FBC4C105", // X7104
+  "0x7105FAA4a26eD1c67B8B2b41BEc98F06Ee21D105", // X7105
+  "0xd5De579f8324E3625bDC5E8C6F3dB248614a41C5", // SHIBONE
+  "0xFeeeef4D7b4Bf3cc8BD012D02D32Ba5fD3D51e31", // TAIL
+  "0xBfB2b6870501a6Ff17121D676A0A45a38c9eeD1e", // TOAD
+
+  // Weird
+  "0xd233D1f6FD11640081aBB8db125f722b5dc729dc", // Old USD
+  "0x9EA3b5b4EC044b70375236A281986106457b20EF", // DELTA
+]);
+
+export const constants = {
+  ADDRESS: process.env.ADDRESS as string,
+  ETH_PRICE: BigInt(process.env.ETH_PRICE as string),
+  MIN_LIQUIDITY_IN_USDT: BigInt(process.env.MIN_LIQUIDITY_IN_USDT as string),
+  FLASH_CONTRACT: process.env.FLASH_CONTRACT as string,
+  SCAN_RPC: process.env.SCAN_RPC as string,
+  EXECUTION_RPC: process.env.EXECUTION_RPC as string,
+  STABLE_COIN: process.env.STABLE_COIN as string,
+  PRIVATE_KEY: process.env.PRIVATE_KEY as string
+};

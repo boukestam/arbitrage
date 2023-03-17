@@ -33,7 +33,7 @@ export class UniswapV3 extends DEX {
     return this.pairs;
   }
 
-  async load(provider: ethers.providers.JsonRpcBatchProvider) {
+  async load(provider: ethers.providers.BaseProvider) {
     const factory = new Contract(this.factory, uniswapV3FactoryABI, provider);
 
     const events = await getEvents(
@@ -83,7 +83,7 @@ export class UniswapV3 extends DEX {
   }
 
   async getSwapTx(
-    provider: ethers.providers.JsonRpcBatchProvider,
+    provider: ethers.providers.BaseProvider,
     input: bigint,
     path: Arbitrage[],
     to: string
@@ -226,11 +226,11 @@ export class UniswapV3Pair extends Pair {
     );
   }
 
-  getContract(provider: ethers.providers.JsonRpcBatchProvider) {
+  getContract(provider: ethers.providers.BaseProvider) {
     return new Contract(this.address, uniswapV3PoolABI, provider);
   }
 
-  async reload(provider: ethers.providers.JsonRpcBatchProvider) {
+  async reload(provider: ethers.providers.BaseProvider) {
     const contract = new Contract(this.address, uniswapV3PoolABI, provider);
 
     const slot0 = await contract.slot0();

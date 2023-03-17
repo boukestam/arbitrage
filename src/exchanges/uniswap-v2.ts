@@ -24,7 +24,7 @@ export class UniswapV2 extends DEX {
     return this.pairs;
   }
 
-  async load(provider: ethers.providers.JsonRpcBatchProvider) {
+  async load(provider: ethers.providers.BaseProvider) {
     const factory = new Contract(this.factory, uniswapV2FactoryABI, provider);
 
     const count = (await factory.allPairsLength()).toNumber();
@@ -54,7 +54,7 @@ export class UniswapV2 extends DEX {
   }
 
   async getSwapTx(
-    provider: ethers.providers.JsonRpcBatchProvider,
+    provider: ethers.providers.BaseProvider,
     input: bigint,
     path: Arbitrage[],
     to: string
@@ -119,11 +119,11 @@ export class UniswapV2Pair extends Pair {
     return this.reserve0 > 0 && this.reserve1 > 0;
   }
 
-  getContract(provider: ethers.providers.JsonRpcBatchProvider) {
+  getContract(provider: ethers.providers.BaseProvider) {
     return new Contract(this.address, uniswapV2PairABI, provider);
   }
 
-  async reload(provider: ethers.providers.JsonRpcBatchProvider) {
+  async reload(provider: ethers.providers.BaseProvider) {
     const contract = this.getContract(provider);
     const { _reserve0, _reserve1 } = await contract.getReserves();
     this.reserve0 = _reserve0.toBigInt();

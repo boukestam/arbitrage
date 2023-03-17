@@ -1,9 +1,9 @@
-import { batch } from "./util/utils";
+import { batch } from "../util/utils";
 import fs from "fs";
 
-import erc20ABI from "./abi/erc20.json";
+import erc20ABI from "../abi/erc20.json";
 import { ethers, Contract } from "ethers";
-import { Pair } from "./exchanges/types";
+import { Pair } from "../exchanges/types";
 
 export interface TokenInfo {
   address: string;
@@ -14,7 +14,7 @@ export interface TokenInfo {
 
 export async function loadTokens(
   tokens: string[],
-  provider: ethers.providers.JsonRpcBatchProvider
+  provider: ethers.providers.BaseProvider
 ) {
   const file = "data/tokens.json";
 
