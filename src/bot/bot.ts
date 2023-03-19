@@ -57,7 +57,7 @@ export class Bot {
 
   isBlacklisted(arbitrage: Arbitrage) {
     const time = this.blacklist.get(arbitrage.getHash());
-    return !time || time < Date.now();
+    return time && time >= Date.now();
   }
 
   addToBlacklist(arbitrage: Arbitrage) {
@@ -150,7 +150,7 @@ export class Bot {
     const arbitrager = new CircularArbitrager(arbitragePairs);
 
     // Find all arbitrages
-    const arbitrages = arbitrager.find(this.starters).filter((arbitrage) => !this.blacklist.has(arbitrage.getHash()));
+    const arbitrages = arbitrager.find(this.starters).filter((arbitrage) => !this.isBlacklisted(arbitrage));
     if (arbitrages.length === 0) return;
 
     // Create executions
