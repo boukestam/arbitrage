@@ -82,11 +82,23 @@ export class CircularArbitrager {
 
         if (otherToken === token) {
           arbitrages.push(
-            new Arbitrage(node, pair.pair, otherToken, amountOut, node.depth + 1)
+            new Arbitrage(
+              node,
+              pair.pair,
+              otherToken,
+              amountOut,
+              node.depth + 1
+            )
           );
         } else if (node.depth + 1 < maxDepth) {
           nodes.push(
-            new Arbitrage(node, pair.pair, otherToken, amountOut, node.depth + 1)
+            new Arbitrage(
+              node,
+              pair.pair,
+              otherToken,
+              amountOut,
+              node.depth + 1
+            )
           );
         }
       }
@@ -97,24 +109,25 @@ export class CircularArbitrager {
 
   getOutput(arbitrage: Arbitrage, input: bigint, fee: bigint) {
     const path = arbitrage.getPath();
+    const pairs = path.slice(1).map((arbitrage) => arbitrage.pair);
+
+    for (const pair of pairs) pair.save();
 
     let amount = input;
-    for (let i = 0; i < path.length - 1; i++) {
-      const pair = this.pairsByToken
-        .get(path[i].token)
-        .find((pair) => pair.pair.other(path[i].token) === path[i + 1].token);
-
-      amount = pair.pair.swap(path[i].token, amount);
+    for (let i = 1; i < path.length; i++) {
+      amount = path[i].pair.swap(path[i - 1].token, amount, true);
     }
 
-    return amount - input - Arbitrage.calculateFee(input, fee);
+    for (const pair of pairs) pair.restore();
+
+    return amount - Arbitrage.calculateFee(input, fee);
   }
 
   findOptimalAmounts(arbitrage: Arbitrage, fee: bigint) {
     const path = arbitrage.getPath();
 
     let input = path[0].amount;
-    let output = arbitrage.amount;
+    let output = this.getOutput(arbitrage, input, fee);
 
     const precision = BigInt(1e6);
     let divider = precision * 2n;

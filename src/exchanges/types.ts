@@ -4,7 +4,7 @@ import fs from "fs";
 
 export type DEXType = "uniswap-v2";
 
-export abstract class DEX {
+export abstract class Exchange {
   name: string;
 
   constructor(name: string) {
@@ -33,6 +33,7 @@ export abstract class DEX {
   abstract getSwapTx(
     provider: ethers.providers.BaseProvider,
     input: bigint,
+    minOutput: bigint,
     path: Arbitrage[],
     to: string
   ): Promise<ethers.PopulatedTransaction>;
@@ -42,11 +43,18 @@ export abstract class DEX {
 }
 
 export abstract class Pair {
+  exchange: Exchange;
   address: string;
   token0: string;
   token1: string;
 
-  constructor(address: string, token0: string, token1: string) {
+  constructor(
+    exchange: Exchange,
+    address: string,
+    token0: string,
+    token1: string
+  ) {
+    this.exchange = exchange;
     this.address = address;
     this.token0 = token0;
     this.token1 = token1;
@@ -54,9 +62,7 @@ export abstract class Pair {
 
   abstract isTradable(): boolean;
 
-  abstract reload(
-    provider: ethers.providers.BaseProvider
-  ): Promise<void>;
+  abstract reload(provider: ethers.providers.BaseProvider): Promise<void>;
 
   other(token: string) {
     if (token === this.token0) return this.token1;
@@ -64,7 +70,10 @@ export abstract class Pair {
   }
 
   abstract convert(token: string, amount: bigint): bigint;
-  abstract swap(token: string, amount: bigint): bigint;
+  abstract swap(token: string, amount: bigint, update?: boolean): bigint;
 
   abstract reserve(token: string): bigint;
+
+  abstract save(): void;
+  abstract restore(): void;
 }

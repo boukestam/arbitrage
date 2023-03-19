@@ -13,6 +13,7 @@ export const blocked = new Set<string>([
   "0xd5De579f8324E3625bDC5E8C6F3dB248614a41C5", // SHIBONE
   "0xFeeeef4D7b4Bf3cc8BD012D02D32Ba5fD3D51e31", // TAIL
   "0xBfB2b6870501a6Ff17121D676A0A45a38c9eeD1e", // TOAD
+  "0x616ef40D55C0D2c506f4d6873Bda8090b79BF8fC", // KTO
 
   // Weird
   "0xd233D1f6FD11640081aBB8db125f722b5dc729dc", // Old USD
@@ -25,7 +26,6 @@ export const constants = {
   MIN_LIQUIDITY_IN_USDT: BigInt(process.env.MIN_LIQUIDITY_IN_USDT as string),
   FLASH_CONTRACT: process.env.FLASH_CONTRACT as string,
   SCAN_RPC: process.env.SCAN_RPC as string,
-  EXECUTION_RPC: process.env.EXECUTION_RPC as string,
   STABLE_COIN: process.env.STABLE_COIN as string,
-  PRIVATE_KEY: process.env.PRIVATE_KEY as string
+  PRIVATE_KEY: process.env.PRIVATE_KEY as string,
 };

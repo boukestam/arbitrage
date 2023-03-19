@@ -1,5 +1,5 @@
 import { ethers, BigNumber, Contract } from "ethers";
-import { DEX, Pair, DEXType } from "./types";
+import { Exchange, Pair, DEXType } from "./types";
 import { batch } from "../util/utils";
 
 import uniswapV2FactoryABI from "../abi/uniswap-v2-factory.json";
@@ -7,7 +7,7 @@ import uniswapV2PairABI from "../abi/uniswap-v2-pair.json";
 import uniswapV2RouterABI from "../abi/uniswap-v2-router.json";
 import { Arbitrage } from "../arbitrage/arbitrage";
 
-export class UniswapV2 extends DEX {
+export class UniswapV2 extends Exchange {
   factory: string;
   router: string;
   pairs: UniswapV2Pair[];
@@ -41,6 +41,7 @@ export class UniswapV2 extends DEX {
         const token1 = await pair.token1();
         const { _reserve0, _reserve1 } = await pair.getReserves();
         return new UniswapV2Pair(
+          this,
           address,
           token0,
           token1,
@@ -56,6 +57,7 @@ export class UniswapV2 extends DEX {
   async getSwapTx(
     provider: ethers.providers.BaseProvider,
     input: bigint,
+    minOutput: bigint,
     path: Arbitrage[],
     to: string
   ) {
@@ -63,7 +65,7 @@ export class UniswapV2 extends DEX {
 
     const swapTx = await router.populateTransaction.swapExactTokensForTokens(
       input,
-      input,
+      minOutput,
       path.map((arbitrage) => arbitrage.token),
       to,
       Math.floor(Date.now() / 1000) + 600 // 10 minutes from now
@@ -88,6 +90,7 @@ export class UniswapV2 extends DEX {
     this.pairs = data.pairs.map(
       (item: any) =>
         new UniswapV2Pair(
+          this,
           item.address,
           item.token0,
           item.token1,
@@ -102,14 +105,18 @@ export class UniswapV2Pair extends Pair {
   reserve0: bigint;
   reserve1: bigint;
 
+  reserve0BeforeUpdate: bigint;
+  reserve1BeforeUpdate: bigint;
+
   constructor(
+    exchange: UniswapV2,
     address: string,
     token0: string,
     token1: string,
     reserve0: bigint,
     reserve1: bigint
   ) {
-    super(address, token0, token1);
+    super(exchange, address, token0, token1);
 
     this.reserve0 = reserve0;
     this.reserve1 = reserve1;
@@ -144,7 +151,7 @@ export class UniswapV2Pair extends Pair {
     throw new Error("Invalid token for pair");
   }
 
-  swap(token: string, amount: bigint): bigint {
+  swap(token: string, amount: bigint, update: boolean = false): bigint {
     if (this.reserve0 === 0n || this.reserve1 === 0n)
       throw new Error("Zero reserve");
 
@@ -153,13 +160,27 @@ export class UniswapV2Pair extends Pair {
     if (token === this.token0) {
       const numerator = amountWithFee * this.reserve1;
       const denominator = this.reserve0 * 1000n + amountWithFee;
-      return numerator / denominator;
+      const output = numerator / denominator;
+
+      if (update) {
+        this.reserve0 += amount;
+        this.reserve1 -= output;
+      }
+
+      return output;
     }
 
     if (token === this.token1) {
       const numerator = amountWithFee * this.reserve0;
       const denominator = this.reserve1 * 1000n + amountWithFee;
-      return numerator / denominator;
+      const output = numerator / denominator;
+
+      if (update) {
+        this.reserve0 -= output;
+        this.reserve1 += amount;
+      }
+
+      return output;
     }
 
     throw new Error("Invalid token for pair");
@@ -170,5 +191,15 @@ export class UniswapV2Pair extends Pair {
     if (token === this.token1) return this.reserve1;
 
     throw new Error("Invalid token for pair");
+  }
+
+  save() {
+    this.reserve0BeforeUpdate = this.reserve0;
+    this.reserve1BeforeUpdate = this.reserve1;
+  }
+
+  restore() {
+    this.reserve0 = this.reserve0BeforeUpdate;
+    this.reserve1 = this.reserve1BeforeUpdate;
   }
 }

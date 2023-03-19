@@ -1,48 +1,28 @@
-import { ethers, Wallet } from "ethers";
+import { ethers } from "ethers";
 import { CircularArbitrager } from "../arbitrage/circular-arbitrager";
-import { DEX, Pair } from "../exchanges/types";
+import { Exchange, Pair } from "../exchanges/types";
 import { loadTokens, TokenInfo } from "./tokens";
 import { batch, sleep } from "../util/utils";
 import { findLiquidPairs, LiquidityInfo } from "../exchanges/liquidity";
-import {
-  executeFlashLoanArbitrage,
-  verifyFlashLoanArbitrage,
-} from "../arbitrage/flash-loan";
 import { blocked, constants } from "./config";
-import { formatUnits } from "ethers/lib/utils";
-import { Arbitrage } from "../arbitrage/arbitrage";
 import { StartToken } from "../arbitrage/starters";
-
-interface ProfitableArbitrage {
-  arbitrage: Arbitrage;
-  input: bigint;
-  token: TokenInfo;
-  profit: bigint;
-  profitInUSD: bigint;
-  gasInETH: bigint;
-  gasInUSD: bigint;
-  gasInToken: bigint;
-  netProfitInUSD: bigint;
-  gasLimit: bigint;
-  gasPrice: bigint;
-  args: any[];
-}
+import { ArbitrageExecution } from "../arbitrage/arbitrage-execution";
 
 export class Bot {
   provider: ethers.providers.BaseProvider;
-  dexes: DEX[];
+  dexes: Exchange[];
   stable: string;
   starters: StartToken[];
 
   pairs: Pair[] = [];
   tokens = new Map<string, TokenInfo>();
 
-  ethPrice: bigint;
-  minLiquidityInUSDT: bigint;
+  history: ArbitrageExecution[][] = [];
+  executed: ArbitrageExecution[] = [];
 
   constructor(
     provider: ethers.providers.BaseProvider,
-    dexes: DEX[],
+    dexes: Exchange[],
     stable: string,
     starters: StartToken[]
   ) {
@@ -50,9 +30,6 @@ export class Bot {
     this.dexes = dexes;
     this.stable = stable;
     this.starters = starters;
-
-    this.ethPrice = constants.ETH_PRICE;
-    this.minLiquidityInUSDT = constants.MIN_LIQUIDITY_IN_USDT;
   }
 
   async load() {
@@ -82,7 +59,7 @@ export class Bot {
     let initialLiquidPairs = findLiquidPairs(
       this.pairs,
       this.stable,
-      this.minLiquidityInUSDT / 2n
+      constants.MIN_LIQUIDITY_IN_USDT / 2n
     );
     console.log("Initial liquid pairs: " + initialLiquidPairs.length);
 
@@ -96,7 +73,7 @@ export class Bot {
     let liquidPairs = findLiquidPairs(
       initialLiquidPairs.map((pair) => pair.pair),
       this.stable,
-      this.minLiquidityInUSDT
+      constants.MIN_LIQUIDITY_IN_USDT
     );
     console.log("Final liquid pairs: " + liquidPairs.length);
 
@@ -144,7 +121,7 @@ export class Bot {
         const arbitragePairs = findLiquidPairs(
           liquidPairs.map((pair) => pair.pair),
           this.stable,
-          this.minLiquidityInUSDT
+          constants.MIN_LIQUIDITY_IN_USDT
         );
 
         await this.findArbitrages(arbitragePairs, nextBlock);
@@ -160,177 +137,58 @@ export class Bot {
   async findArbitrages(arbitragePairs: LiquidityInfo[], nextBlock: number) {
     const arbitrager = new CircularArbitrager(arbitragePairs);
 
+    // Find all arbitrages
     const arbitrages = arbitrager.find(this.starters);
+    if (arbitrages.length === 0) return;
 
-    arbitrages.sort(
-      (a, b) => b.getProfitPercentage() - a.getProfitPercentage()
-    );
+    // Create executions
+    const executions = arbitrages.map((arbitrage) => {
+      const token = this.tokens.get(arbitrage.token);
 
-    console.log("Found " + arbitrages.length + " arbitrages");
+      const pool = this.starters.find(
+        (starter) => starter.address === arbitrage.token
+      );
 
-    for (const arbitrage of arbitrages.slice(0, 10)) {
-      console.log(arbitrage.toString(this.tokens));
-    }
+      return new ArbitrageExecution(arbitrage, arbitrager, token, pool);
+    });
 
-    const results = await batch(
-      arbitrages,
-      async (arbitrage) => {
-        const token = this.tokens.get(arbitrage.token);
+    // Store executions in history
+    this.history.push(executions);
+    if (this.history.length > 20) this.history.shift();
 
-        const pool = this.starters.find(
-          (starter) => starter.address === arbitrage.token
-        );
-
-        const { input, output } = arbitrager.findOptimalAmounts(
-          arbitrage,
-          pool.fee
-        );
-
-        try {
-          const { profit, gas, args } = await verifyFlashLoanArbitrage(
-            this.provider,
-            this.dexes[0],
-            input,
-            arbitrage.getPath(),
-            pool.v3Pool,
-            pool.isToken0,
-            pool.fee
-          );
-
-          return { token, pool, input, profit, gas, args };
-        } catch (e) {
-          return null;
-        }
-      },
+    // Verify executions
+    await batch(
+      executions,
+      (execution) => execution.verify(this.provider),
       100
     );
 
+    const verifiedExecutions = executions.filter(
+      (execution) => execution.verified
+    );
+    if (verifiedExecutions.length === 0) return;
+
+    // Get current gas price
     const gasData = await this.provider.getFeeData();
 
-    const profitableArbitrages: ProfitableArbitrage[] = [];
-
-    for (let i = 0; i < arbitrages.length; i++) {
-      const arbitrage = arbitrages[i];
-      const result = results[i];
-
-      if (!result) continue;
-
-      const { token, pool, input, profit, gas, args } = result;
-
-      const minLiquidityOfToken =
-        arbitragePairs.find((pair) => pair.pair.token0 === token.address)
-          ?.minAmount0 ||
-        arbitragePairs.find((pair) => pair.pair.token1 === token.address)
-          ?.minAmount1;
-
-      const profitInUSD =
-        (profit * this.minLiquidityInUSDT) / minLiquidityOfToken;
-
-      const gasPrice = gasData.gasPrice.toBigInt();
-      const gasInETH = gas * gasPrice;
-      const gasInUSD = (gasInETH * this.ethPrice) / BigInt(1e12);
-
-      const netProfitInUSD = profitInUSD - gasInUSD;
-
-      if (netProfitInUSD < 0) continue;
-
-      const gasInToken = (profit * gasInUSD) / profitInUSD;
-
-      const info: ProfitableArbitrage = {
-        arbitrage,
-        input,
-        token,
-        profit,
-        profitInUSD,
-        gasInETH,
-        gasInUSD,
-        gasInToken,
-        netProfitInUSD,
-        gasLimit: gas,
-        gasPrice: gasPrice,
-        args,
-      };
-
-      profitableArbitrages.push(info);
+    // Calculate profit
+    for (const execution of verifiedExecutions) {
+      execution.calculateProfit(arbitragePairs, gasData);
     }
 
-    if (profitableArbitrages.length > 0) {
-      profitableArbitrages.sort((a, b) =>
-        Number(b.netProfitInUSD - a.netProfitInUSD)
-      );
+    const profitableExecutions = executions.filter(
+      (execution) => execution.netProfitInUSD > 0
+    );
+    if (profitableExecutions.length === 0) return;
 
-      const wallet = new Wallet(
-        constants.PRIVATE_KEY,
-        this.provider
-      );
+    // Sort by profit
+    profitableExecutions.sort((a, b) =>
+      Number(b.netProfitInUSD - a.netProfitInUSD)
+    );
 
-      const arbitrage = profitableArbitrages[0];
+    this.executed.push(profitableExecutions[0]);
 
-      console.log("Time: " + new Date().toLocaleString());
-      console.log(arbitrage.arbitrage.toString(this.tokens));
-      console.log(
-        "Optimal input: " +
-          formatUnits(arbitrage.input, arbitrage.token.decimals) +
-          " " +
-          arbitrage.token.symbol
-      );
-      console.log(
-        "Profit: " +
-          formatUnits(arbitrage.profit, arbitrage.token.decimals) +
-          " " +
-          arbitrage.token.symbol
-      );
-      console.log("Profit in USD: " + formatUnits(arbitrage.profitInUSD, 6));
-      console.log("Gas fee in USD: " + formatUnits(arbitrage.gasInUSD, 6));
-
-      console.log(
-        "Minimum output: " +
-          formatUnits(arbitrage.gasInToken, arbitrage.token.decimals) +
-          " " +
-          arbitrage.token.symbol
-      );
-
-      // Increase the gas if there is a big profit
-      if (arbitrage.netProfitInUSD > 5000000n) {
-        const minerRewardInUSD = arbitrage.netProfitInUSD - 5000000n;
-
-        arbitrage.gasPrice =
-          (arbitrage.gasPrice * (arbitrage.gasInUSD + minerRewardInUSD)) /
-          arbitrage.gasInUSD;
-
-        arbitrage.gasInToken =
-          (arbitrage.gasInToken * (arbitrage.gasInUSD + minerRewardInUSD)) /
-          arbitrage.gasInUSD;
-
-        console.log("Miner reward in USD: " + formatUnits(minerRewardInUSD, 6));
-        console.log("Gas price: " + formatUnits(arbitrage.gasPrice, 9));
-
-        console.log(
-          "Increased minimum output: " +
-            formatUnits(arbitrage.gasInToken, arbitrage.token.decimals) +
-            " " +
-            arbitrage.token.symbol
-        );
-      }
-
-      try {
-        const receipts = await executeFlashLoanArbitrage(
-          this.provider,
-          wallet,
-          arbitrage.args,
-          arbitrage.gasInToken,
-          nextBlock,
-          arbitrage.gasLimit,
-          arbitrage.gasPrice,
-          0n
-        );
-
-        console.log("Arbitrage successfull");
-        console.log(receipts);
-      } catch (e) {
-        console.log("Arbitrage failed");
-        console.error(e);
-      }
-    }
+    // Execute the most profitable arbitrage
+    await profitableExecutions[0].execute(this.provider, nextBlock);
   }
 }

@@ -1,5 +1,5 @@
 import { ethers, Contract, BigNumber } from "ethers";
-import { DEX, Pair } from "./types";
+import { Exchange, Pair } from "./types";
 import { batch, bigintToHex } from "../util/utils";
 import { getEvents } from "../util/events";
 import {
@@ -16,7 +16,7 @@ import { Arbitrage } from "../arbitrage/arbitrage";
 
 const PRICE_PRECISION = 10n ** 18n;
 
-export class UniswapV3 extends DEX {
+export class UniswapV3 extends Exchange {
   factory: string;
   router: string;
   pairs: UniswapV3Pair[];
@@ -66,6 +66,7 @@ export class UniswapV3 extends DEX {
         ).liquidityGross;
 
         return new UniswapV3Pair(
+          this,
           address,
           token0,
           token1,
@@ -85,6 +86,7 @@ export class UniswapV3 extends DEX {
   async getSwapTx(
     provider: ethers.providers.BaseProvider,
     input: bigint,
+    minOutput: bigint,
     path: Arbitrage[],
     to: string
   ) {
@@ -98,7 +100,7 @@ export class UniswapV3 extends DEX {
       recipient: to,
       deadline: Math.floor(Date.now() / 1000) + 600, // 10 minutes from now
       amountIn: input,
-      amountOutMinimum: input,
+      amountOutMinimum: minOutput,
     });
 
     return swapTx;
@@ -142,6 +144,7 @@ export class UniswapV3 extends DEX {
     this.pairs = data.pairs.map(
       (item: any) =>
         new UniswapV3Pair(
+          this,
           item.address,
           item.token0,
           item.token1,
@@ -171,6 +174,7 @@ export class UniswapV3Pair extends Pair {
   price: bigint;
 
   constructor(
+    exchange: UniswapV3,
     address: string,
     token0: string,
     token1: string,
@@ -181,7 +185,7 @@ export class UniswapV3Pair extends Pair {
     tickSpacing: bigint,
     tickLiquidity: bigint
   ) {
-    super(address, token0, token1);
+    super(exchange, address, token0, token1);
 
     this.fee = fee;
     this.sqrtPriceX96 = sqrtPriceX96;
@@ -268,5 +272,13 @@ export class UniswapV3Pair extends Pair {
 
   static getPriceFromSqrtPriceX96(sqrtPriceX96: bigint): bigint {
     return (sqrtPriceX96 * sqrtPriceX96 * PRICE_PRECISION) >> 192n;
+  }
+
+  save() {
+    // TODO: implement
+  }
+
+  restore() {
+    // TODO: implement
   }
 }

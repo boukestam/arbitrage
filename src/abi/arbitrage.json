@@ -7,6 +7,11 @@
   {
     "inputs": [
       {
+        "internalType": "uint256",
+        "name": "index",
+        "type": "uint256"
+      },
+      {
         "internalType": "bytes",
         "name": "returnData",
         "type": "bytes"
@@ -14,13 +19,6 @@
     ],
     "name": "CallFailed",
     "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "depositETH",
-    "outputs": [],
-    "stateMutability": "payable",
-    "type": "function"
   },
   {
     "inputs": [
@@ -42,6 +40,29 @@
     "inputs": [
       {
         "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "value",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bytes",
+        "name": "data",
+        "type": "bytes"
+      }
+    ],
+    "name": "execute",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "pool",
         "type": "address"
       },
@@ -53,6 +74,11 @@
       {
         "internalType": "uint256",
         "name": "minOutput",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "deadline",
         "type": "uint256"
       },
       {
@@ -111,34 +137,7 @@
     "type": "function"
   },
   {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "token",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      }
-    ],
-    "name": "withdraw",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "amount",
-        "type": "uint256"
-      }
-    ],
-    "name": "withdrawETH",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
+    "stateMutability": "payable",
+    "type": "receive"
   }
 ]
