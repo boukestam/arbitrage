@@ -18,6 +18,8 @@ export class ArbitrageExecution {
   token: TokenInfo;
   pool: StartToken;
 
+  creationTime: number;
+
   optimalInput: bigint;
   optimalOutput: bigint;
 
@@ -26,6 +28,7 @@ export class ArbitrageExecution {
   args: any[];
 
   verified: boolean = false;
+  verifiedTime: number;
 
   errorIndex: bigint;
   errorReason: string;
@@ -39,6 +42,7 @@ export class ArbitrageExecution {
   minerRewardInUSD: bigint;
 
   success: boolean = false;
+  executionTime: number;
   tx: PopulatedTransaction;
   debug: FlashDebug;
   error: any;
@@ -54,6 +58,8 @@ export class ArbitrageExecution {
 
     this.token = token;
     this.pool = pool;
+
+    this.creationTime = Date.now();
   }
 
   async verify(provider: ethers.providers.BaseProvider) {

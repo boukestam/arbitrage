@@ -7,6 +7,7 @@ import { findLiquidPairs, LiquidityInfo } from "../exchanges/liquidity";
 import { blocked, constants } from "./config";
 import { StartToken } from "../arbitrage/starters";
 import { ArbitrageExecution } from "../arbitrage/arbitrage-execution";
+import { Arbitrage } from "../arbitrage/arbitrage";
 
 export class Bot {
   provider: ethers.providers.BaseProvider;
@@ -19,6 +20,8 @@ export class Bot {
 
   history: ArbitrageExecution[][] = [];
   executed: ArbitrageExecution[] = [];
+
+  blacklist = new Map<string, number>();
 
   constructor(
     provider: ethers.providers.BaseProvider,
@@ -50,6 +53,15 @@ export class Bot {
     console.log("Loading tokens...");
 
     this.tokens = await loadTokens(Array.from(tokens.values()), this.provider);
+  }
+
+  isBlacklisted(arbitrage: Arbitrage) {
+    const time = this.blacklist.get(arbitrage.getHash());
+    return !time || time < Date.now();
+  }
+
+  addToBlacklist(arbitrage: Arbitrage) {
+    this.blacklist.set(arbitrage.getHash(), Date.now() + 3600000); // blacklist for 1 hour
   }
 
   async run() {
@@ -138,7 +150,7 @@ export class Bot {
     const arbitrager = new CircularArbitrager(arbitragePairs);
 
     // Find all arbitrages
-    const arbitrages = arbitrager.find(this.starters);
+    const arbitrages = arbitrager.find(this.starters).filter((arbitrage) => !this.blacklist.has(arbitrage.getHash()));
     if (arbitrages.length === 0) return;
 
     // Create executions
@@ -162,6 +174,10 @@ export class Bot {
       (execution) => execution.verify(this.provider),
       100
     );
+
+    for (const execution of executions) {
+      if (!execution.verified) this.addToBlacklist(execution.arbitrage);
+    }
 
     const verifiedExecutions = executions.filter(
       (execution) => execution.verified

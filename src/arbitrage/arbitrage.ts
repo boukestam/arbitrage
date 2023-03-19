@@ -41,6 +41,10 @@ export class Arbitrage {
     return mulDivRoundingUp(amount, fee, BigInt(1e6));
   }
 
+  getHash() {
+    return this.getPath().slice(1).map(p => p.pair.address).join('->');
+  }
+
   toString(tokens: Map<string, TokenInfo>) {
     const path = this.getPath();
     const percentage = this.getProfitPercentage();
