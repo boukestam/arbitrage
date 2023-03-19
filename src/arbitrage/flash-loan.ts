@@ -155,16 +155,19 @@ export async function executeFlashLoanArbitrage(
   });
 
   tx.chainId = 1;
+  tx.nonce = await provider.getTransactionCount(wallet.address, 'latest')
+
+  const signedTx = await wallet.signTransaction(tx)
 
   const relays = [
-    "https://relay.ultrasound.money",
+    "https://0xa1559ace749633b997cb3fdacffb890aeebdb0f5a3b6aaa7eeeaf1a38af0a8fe88b9e4b1f61f236d2e64d95733327a62@relay.ultrasound.money",
     "https://relay.flashbots.net",
-    "https://agnostic-relay.net",
-    "https://bloxroute.ethical.blxrbdn.com",
+    "https://0xa7ab7a996c8584251c8f925da3170bdfd6ebc75d50f5ddc4050a6fdc77f2a3b5fce2cc750d0865e05d7228af97d69561@agnostic-relay.net",
+    "https://0xad0a8bb54565c2211cee576363f3a347089d2f07cf72679d16911d740262694cadb62d7fd7483f27afd714ca0f1b9118@bloxroute.ethical.blxrbdn.com",
   ];
 
   const debug = await Promise.allSettled(
-    relays.map((relay) => sendToRelay(relay, provider, wallet, tx, block))
+    relays.map((relay) => sendToRelay(relay, provider, wallet, signedTx, block))
   );
 
   const success = debug.some(
@@ -185,7 +188,7 @@ async function sendToRelay(
   relay: string,
   provider: ethers.providers.BaseProvider,
   wallet: Wallet,
-  tx: PopulatedTransaction,
+  signedTx: string,
   block: number
 ) {
   const flashbotsProvider = await FlashbotsBundleProvider.create(
@@ -195,15 +198,10 @@ async function sendToRelay(
     1
   );
 
-  const signedBundle = await flashbotsProvider.signBundle([
-    {
-      signer: wallet,
-      transaction: tx,
-    },
-  ]);
+  const blocks = [block, block + 1]
 
-  const bundlePromises = [block, block + 1].map((targetBlockNumber) =>
-    flashbotsProvider.sendRawBundle(signedBundle, targetBlockNumber)
+  const bundlePromises = blocks.map((targetBlockNumber) =>
+    flashbotsProvider.sendRawBundle([signedTx], targetBlockNumber)
   );
   const bundles: any[] = await Promise.all(bundlePromises);
 
@@ -215,7 +213,13 @@ async function sendToRelay(
     bundles.map((bundle) => bundle.receipts())
   );
 
-  return { receipts, simulations };
+  const conflictPromises = blocks.map((targetBlockNumber) =>
+    flashbotsProvider.getConflictingBundle([signedTx], targetBlockNumber)
+  );
+
+  const conflicts = await Promise.allSettled(conflictPromises);
+
+  return { blocks, receipts, simulations, conflicts };
 }
 
 function encodeInput(index: number, outputStart: number, dataStart: number) {
