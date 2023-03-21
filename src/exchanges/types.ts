@@ -15,8 +15,8 @@ export abstract class Exchange {
 
   abstract load(provider: ethers.providers.BaseProvider): void;
 
-  async loadFromFile(provider: ethers.providers.BaseProvider) {
-    const file = "data/" + this.name + ".json";
+  async loadFromFile(provider: ethers.providers.BaseProvider, dir: string) {
+    const file = "data/" + dir + "/" + this.name + ".json";
 
     console.log("Loading dex: " + this.name + "...");
 

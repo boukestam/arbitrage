@@ -21,12 +21,24 @@ export class UniswapV3 extends Exchange {
   router: string;
   pairs: UniswapV3Pair[];
 
-  constructor(name: string, factory: string, router: string) {
+  fromBlock: number;
+  toBlock: number;
+
+  constructor(
+    name: string,
+    factory: string,
+    router: string,
+    fromBlock: number,
+    toBlock: number
+  ) {
     super(name);
 
     this.factory = factory;
     this.router = router;
     this.pairs = [];
+
+    this.fromBlock = fromBlock;
+    this.toBlock = toBlock;
   }
 
   getPairs() {
@@ -39,10 +51,11 @@ export class UniswapV3 extends Exchange {
     const events = await getEvents(
       factory,
       ["PoolCreated"],
-      12369621,
-      16772418,
+      this.fromBlock,
+      this.toBlock,
       2500,
       10,
+      true,
       true
     );
 

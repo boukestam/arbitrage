@@ -18,19 +18,22 @@ export type FlashDebug = PromiseSettledResult<{
   simulations: PromiseSettledResult<any>[];
 }>[];
 
+export interface VerificationResult {
+  profit: bigint;
+  gas: bigint;
+  args: any[];
+}
+
 export async function verifyFlashLoanArbitrage(
   provider: ethers.providers.BaseProvider,
+  flashContract: string,
   input: bigint,
   path: Arbitrage[],
   flashPool: string,
   isToken0: boolean,
   fee: bigint
-): Promise<{
-  profit: bigint;
-  gas: bigint;
-  args: any[];
-}> {
-  const flash = new Contract(constants.FLASH_CONTRACT, arbitrageABI, provider);
+): Promise<VerificationResult> {
+  const flash = new Contract(flashContract, arbitrageABI, provider);
   const token = new Contract(path[0].token, erc20ABI, provider);
 
   const actions: {
@@ -134,17 +137,19 @@ export async function verifyFlashLoanArbitrage(
   return { profit: profit.toBigInt(), gas: gas.toBigInt(), args };
 }
 
-export async function executeFlashLoanArbitrage(
+export async function executeFlashLoanArbitrageRPC(
   provider: ethers.providers.BaseProvider,
+  executionProvider: ethers.providers.BaseProvider,
   wallet: Wallet,
+  flashContract: string,
   args: any[],
   minProfit: bigint,
-  block: number,
+  latestBlock: ethers.providers.Block,
   gasLimit: bigint,
   gasPrice: bigint,
   minerReward: bigint
 ) {
-  const flash = new Contract(constants.FLASH_CONTRACT, arbitrageABI, provider);
+  const flash = new Contract(flashContract, arbitrageABI, provider);
 
   args[2] = minProfit;
 
@@ -155,19 +160,57 @@ export async function executeFlashLoanArbitrage(
   });
 
   tx.chainId = 1;
-  tx.nonce = await provider.getTransactionCount(wallet.address, 'latest')
+  tx.nonce = await provider.getTransactionCount(wallet.address, "latest");
 
-  const signedTx = await wallet.signTransaction(tx)
+  const signedTx = await wallet.signTransaction(tx);
 
-  const relays = [
-    "https://0xa1559ace749633b997cb3fdacffb890aeebdb0f5a3b6aaa7eeeaf1a38af0a8fe88b9e4b1f61f236d2e64d95733327a62@relay.ultrasound.money",
-    "https://relay.flashbots.net",
-    "https://0xa7ab7a996c8584251c8f925da3170bdfd6ebc75d50f5ddc4050a6fdc77f2a3b5fce2cc750d0865e05d7228af97d69561@agnostic-relay.net",
-    "https://0xad0a8bb54565c2211cee576363f3a347089d2f07cf72679d16911d740262694cadb62d7fd7483f27afd714ca0f1b9118@bloxroute.ethical.blxrbdn.com",
-  ];
+  const response = await executionProvider.sendTransaction(signedTx);
+
+  try {
+    const receipt = await executionProvider.waitForTransaction(
+      response.hash,
+      1,
+      60000
+    );
+
+    return { success: true, tx, debug: receipt };
+  } catch (e) {
+    return { success: false, tx, debug: e };
+  }
+}
+
+export async function executeFlashLoanArbitrage(
+  provider: ethers.providers.BaseProvider,
+  wallet: Wallet,
+  flashContract: string,
+  args: any[],
+  minProfit: bigint,
+  latestBlock: ethers.providers.Block,
+  gasLimit: bigint,
+  gasPrice: bigint,
+  minerReward: bigint
+) {
+  const flash = new Contract(flashContract, arbitrageABI, provider);
+
+  args[2] = minProfit;
+
+  const tx = await flash.populateTransaction.uniswapV3Flash(...args, {
+    gasLimit: gasLimit,
+    gasPrice: gasPrice,
+    value: minerReward,
+  });
+
+  tx.chainId = 1;
+  tx.nonce = await provider.getTransactionCount(wallet.address, "latest");
+
+  const signedTx = await wallet.signTransaction(tx);
+
+  const relays = ["https://relay.flashbots.net", "https://builder0x69.io"];
 
   const debug = await Promise.allSettled(
-    relays.map((relay) => sendToRelay(relay, provider, wallet, signedTx, block))
+    relays.map((relay) =>
+      sendToRelay(relay, provider, wallet, signedTx, latestBlock.number)
+    )
   );
 
   const success = debug.some(
@@ -198,7 +241,7 @@ async function sendToRelay(
     1
   );
 
-  const blocks = [block, block + 1]
+  const blocks = [block + 1, block + 2, block + 3, block + 4];
 
   const bundlePromises = blocks.map((targetBlockNumber) =>
     flashbotsProvider.sendRawBundle([signedTx], targetBlockNumber)
@@ -213,13 +256,12 @@ async function sendToRelay(
     bundles.map((bundle) => bundle.receipts())
   );
 
-  const conflictPromises = blocks.map((targetBlockNumber) =>
-    flashbotsProvider.getConflictingBundle([signedTx], targetBlockNumber)
-  );
-
-  const conflicts = await Promise.allSettled(conflictPromises);
-
-  return { blocks, receipts, simulations, conflicts };
+  return {
+    blocks,
+    bundles: bundles.map((bundle) => bundle.bundleHash),
+    receipts,
+    simulations,
+  };
 }
 
 function encodeInput(index: number, outputStart: number, dataStart: number) {

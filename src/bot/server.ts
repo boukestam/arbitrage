@@ -8,17 +8,21 @@ const DEFAULT_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-export function startServer(bot: Bot, port: number) {
+export function startServer(bots: Bot[], port: number) {
   return http
     .createServer(function (req, res) {
       try {
-        const history = bot.history.map((batch) =>
-          batch.map((execution) => execution.toObject(bot.tokens))
-        );
-        const executed = bot.executed.map((execution) =>
-          execution.toObject(bot.tokens)
-        );
-        const json = JSON.stringify({ history, executed }, (key, value) => {
+        const data = bots.map((bot) => {
+          const history = bot.history.map((batch) =>
+            batch.map((execution) => execution.toObject(bot.tokens))
+          );
+          const executed = bot.executed.map((execution) =>
+            execution.toObject(bot.tokens)
+          );
+          return { name: bot.name, history, executed };
+        });
+
+        const json = JSON.stringify(data, (key, value) => {
           // Convert bigints to strings
           if (typeof value === "bigint" || value instanceof BigNumber)
             return value.toString();

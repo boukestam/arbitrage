@@ -2,11 +2,14 @@ import { BigNumber, ethers, PopulatedTransaction, Wallet } from "ethers";
 import { constants } from "../bot/config";
 import { TokenInfo } from "../bot/tokens";
 import { LiquidityInfo } from "../exchanges/liquidity";
+import { waitForBlock } from "../util/wait";
 import { Arbitrage } from "./arbitrage";
 import { CircularArbitrager } from "./circular-arbitrager";
 import {
   executeFlashLoanArbitrage,
+  executeFlashLoanArbitrageRPC,
   FlashDebug,
+  VerificationResult,
   verifyFlashLoanArbitrage,
 } from "./flash-loan";
 import { StartToken } from "./starters";
@@ -33,6 +36,11 @@ export class ArbitrageExecution {
   errorIndex: bigint;
   errorReason: string;
 
+  simulations: {
+    result?: VerificationResult;
+    error?: any;
+  }[] = [];
+
   profitInUSD: bigint;
   gasInETH: bigint;
   gasInUSD: bigint;
@@ -43,6 +51,7 @@ export class ArbitrageExecution {
 
   success: boolean = false;
   executionTime: number;
+  executionBlock: number;
   tx: PopulatedTransaction;
   debug: FlashDebug;
   error: any;
@@ -62,7 +71,7 @@ export class ArbitrageExecution {
     this.creationTime = Date.now();
   }
 
-  async verify(provider: ethers.providers.BaseProvider) {
+  async verify(provider: ethers.providers.BaseProvider, flashContract: string) {
     const { input, output } = this.arbitrager.findOptimalAmounts(
       this.arbitrage,
       this.pool.fee
@@ -78,12 +87,15 @@ export class ArbitrageExecution {
     try {
       const result = await verifyFlashLoanArbitrage(
         provider,
+        flashContract,
         input,
         this.arbitrage.getPath(),
         this.pool.v3Pool,
         this.pool.isToken0,
         this.pool.fee
       );
+
+      this.verifiedTime = Date.now();
 
       this.profit = result.profit;
       this.gasLimit = result.gas;
@@ -106,7 +118,8 @@ export class ArbitrageExecution {
 
   calculateProfit(
     arbitragePairs: LiquidityInfo[],
-    gasData: ethers.providers.FeeData
+    gasData: ethers.providers.FeeData,
+    ethPrice: bigint
   ) {
     const minLiquidityOfToken =
       arbitragePairs.find((pair) => pair.pair.token0 === this.token.address)
@@ -119,18 +132,53 @@ export class ArbitrageExecution {
 
     this.gasPrice = gasData.gasPrice.toBigInt();
     this.gasInETH = this.gasLimit * this.gasPrice;
-    this.gasInUSD = (this.gasInETH * constants.ETH_PRICE) / BigInt(1e12);
+    this.gasInUSD = (this.gasInETH * ethPrice) / BigInt(1e18); // 12 decimals to go from wei to eth, and 6 decimals precision for eth price
     this.gasInToken = (this.profit * this.gasInUSD) / this.profitInUSD;
 
     this.netProfitInUSD = this.profitInUSD - this.gasInUSD;
   }
 
-  async execute(provider: ethers.providers.BaseProvider, nextBlock: number) {
+  async simulate(
+    provider: ethers.providers.BaseProvider,
+    flashContract: string,
+    latestBlock: ethers.providers.Block
+  ) {
+    for (let i = 1; i < 5; i++) {
+      await waitForBlock(provider, latestBlock.number + i);
+
+      try {
+        const result = await verifyFlashLoanArbitrage(
+          provider,
+          flashContract,
+          this.optimalInput,
+          this.arbitrage.getPath(),
+          this.pool.v3Pool,
+          this.pool.isToken0,
+          this.pool.fee
+        );
+        this.simulations.push({ result: result });
+      } catch (e) {
+        this.simulations.push({ error: e });
+      }
+    }
+  }
+
+  async execute(
+    provider: ethers.providers.BaseProvider,
+    executionProvider: ethers.providers.BaseProvider,
+    flashContract: string,
+    latestBlock: ethers.providers.Block,
+    useFlashbots: boolean
+  ) {
     const wallet = new Wallet(constants.PRIVATE_KEY, provider);
 
     // Increase the gas if there is a big profit
     if (this.netProfitInUSD > 5000000n) {
       this.minerRewardInUSD = this.netProfitInUSD - 5000000n;
+
+      if (this.minerRewardInUSD > this.gasInUSD) {
+        this.minerRewardInUSD = this.gasInUSD; // max multiplier of gas price is 2
+      }
 
       this.gasPrice =
         (this.gasPrice * (this.gasInUSD + this.minerRewardInUSD)) /
@@ -141,17 +189,34 @@ export class ArbitrageExecution {
         this.gasInUSD;
     }
 
+    this.executionTime = Date.now();
+    this.executionBlock = latestBlock.number;
+
     try {
-      const result = await executeFlashLoanArbitrage(
-        provider,
-        wallet,
-        this.args,
-        this.gasInToken,
-        nextBlock,
-        this.gasLimit,
-        this.gasPrice,
-        0n
-      );
+      const result = await (useFlashbots
+        ? executeFlashLoanArbitrage(
+            provider,
+            wallet,
+            flashContract,
+            this.args,
+            this.gasInToken,
+            latestBlock,
+            this.gasLimit,
+            this.gasPrice,
+            0n
+          )
+        : executeFlashLoanArbitrageRPC(
+            provider,
+            executionProvider,
+            wallet,
+            flashContract,
+            this.args,
+            this.gasInToken,
+            latestBlock,
+            this.gasLimit,
+            this.gasPrice,
+            0n
+          ));
 
       this.success = result.success;
       this.tx = result.tx;
@@ -174,6 +239,8 @@ export class ArbitrageExecution {
       token: this.token,
       pool: this.pool,
 
+      creationTime: this.creationTime,
+
       optimalInput: this.optimalInput,
       optimalOutput: this.optimalOutput,
 
@@ -182,9 +249,12 @@ export class ArbitrageExecution {
       args: this.args,
 
       verified: this.verified,
+      verifiedTime: this.verifiedTime,
 
       errorIndex: this.errorIndex,
       errorReason: this.errorReason,
+
+      simulations: this.simulations,
 
       profitInUSD: this.profitInUSD,
       gasInETH: this.gasInETH,
@@ -195,6 +265,8 @@ export class ArbitrageExecution {
       minerRewardInUSD: this.minerRewardInUSD,
 
       success: this.success,
+      executionTime: this.executionTime,
+      executionBlock: this.executionBlock,
       tx: this.tx,
       debug: this.debug,
       error: this.error,

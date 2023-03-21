@@ -1,40 +1,49 @@
 import { BigNumber, Contract, Event } from "ethers";
 
 export async function getEvents(
-  contract: Contract, 
-  eventNames: string[], 
-  fromBlock: number, 
-  toBlock: number, 
+  contract: Contract,
+  eventNames: string[],
+  fromBlock: number,
+  toBlock: number,
   blocksPerRequest: number,
   requestsPerBatch: number,
-  log?: boolean
+  log?: boolean,
+  ignoreErrors?: boolean
 ) {
   const events: Event[] = [];
-  
+
   let batchPromises: Promise<Event[]>[] = [];
 
-  const eventFilters = eventNames.map(event => contract.filters[event]());
+  const eventFilters = eventNames.map((event) => contract.filters[event]());
 
   for (let block = fromBlock; block <= toBlock; block += blocksPerRequest) {
     const endBlock = Math.min(block + blocksPerRequest - 1, toBlock);
 
-    if (log) console.log("Getting events from block: " + block + " - " + endBlock);
+    if (log)
+      console.log("Getting events from block: " + block + " - " + endBlock);
 
-    const promises = eventFilters.map(filter => contract.queryFilter(filter, Math.floor(block), Math.floor(endBlock)));
+    const promises = eventFilters.map((filter) =>
+      contract.queryFilter(filter, Math.floor(block), Math.floor(endBlock))
+    );
 
     for (const promise of promises) {
-      batchPromises.push((async () => {
-        try {
-          return await promise;
-        } catch (e) {
-          console.error("Error in batch " + block + " - " + endBlock);
-          throw e;
-        }
-      })());
+      batchPromises.push(
+        (async () => {
+          try {
+            return await promise;
+          } catch (e) {
+            console.error("Error in batch " + block + " - " + endBlock);
+            if (!ignoreErrors) throw e;
+          }
+        })()
+      );
     }
 
-    if (batchPromises.length === requestsPerBatch * eventNames.length || block + blocksPerRequest > toBlock) {
-      let batches;
+    if (
+      batchPromises.length === requestsPerBatch * eventNames.length ||
+      block + blocksPerRequest > toBlock
+    ) {
+      let batches: Event[][] = [];
 
       let retry = 0;
       while (true) {
@@ -42,14 +51,16 @@ export async function getEvents(
           batches = await Promise.all(batchPromises);
           break;
         } catch (e) {
-          if (retry >= 5) throw e;
+          if (retry >= 5) {
+            if (!ignoreErrors) throw e;
+          }
           console.log("Error in batch, retry nr " + retry);
           retry++;
         }
       }
 
       const sortedEvents: Event[] = [];
-      
+
       for (const batchEvents of batches) {
         for (const event of batchEvents) {
           sortedEvents.push(event);
@@ -65,7 +76,7 @@ export async function getEvents(
 
         if (a.logIndex < b.logIndex) return -1;
         if (a.logIndex > b.logIndex) return 1;
-        
+
         throw new Error("Double log");
       }
 

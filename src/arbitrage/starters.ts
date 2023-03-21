@@ -9,13 +9,17 @@ export interface StartToken {
   fee: bigint;
 }
 
-export function getStarters(uniswapV3: UniswapV3) {
-  const liquidV3Pairs = findLiquidPairs(uniswapV3.pairs, constants.STABLE_COIN, constants.MIN_LIQUIDITY_IN_USDT);
+export function getStarters(uniswapV3: UniswapV3, stable: string) {
+  const liquidV3Pairs = findLiquidPairs(
+    uniswapV3.pairs,
+    stable,
+    constants.MIN_LIQUIDITY_IN_USDT
+  );
 
   const starters: StartToken[] = [];
 
   const add = (pair: UniswapV3Pair, token: string, isToken0: boolean) => {
-    const existing = starters.find(starter => starter.address === token);
+    const existing = starters.find((starter) => starter.address === token);
     if (existing) {
       if (existing.fee > pair.fee) {
         existing.v3Pool = pair.address;
@@ -27,10 +31,10 @@ export function getStarters(uniswapV3: UniswapV3) {
         address: token,
         v3Pool: pair.address,
         isToken0: isToken0,
-        fee: pair.fee
+        fee: pair.fee,
       });
     }
-  }
+  };
 
   for (const liquidPair of liquidV3Pairs) {
     const pair = liquidPair.pair as UniswapV3Pair;

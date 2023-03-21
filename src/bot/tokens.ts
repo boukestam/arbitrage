@@ -14,9 +14,10 @@ export interface TokenInfo {
 
 export async function loadTokens(
   tokens: string[],
-  provider: ethers.providers.BaseProvider
+  provider: ethers.providers.BaseProvider,
+  dir: string
 ) {
-  const file = "data/tokens.json";
+  const file = "data/" + dir + "/" + "tokens.json";
 
   let items: any[] = [];
   const infos = new Map<string, TokenInfo>();
