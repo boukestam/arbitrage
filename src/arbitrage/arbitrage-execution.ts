@@ -47,6 +47,7 @@ export class ArbitrageExecution {
   gasInToken: bigint;
   netProfitInUSD: bigint;
   gasPrice: bigint;
+  maxGasPrice: bigint;
   minerRewardInUSD: bigint;
 
   success: boolean = false;

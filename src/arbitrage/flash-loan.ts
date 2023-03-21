@@ -205,7 +205,15 @@ export async function executeFlashLoanArbitrage(
 
   const signedTx = await wallet.signTransaction(tx);
 
-  const relays = ["https://relay.flashbots.net", "https://builder0x69.io"];
+  const relays = [
+    "https://relay.flashbots.net", 
+    "https://builder0x69.io",
+    "https://rpc.beaverbuild.org",
+    "https://buildai.net",
+    "https://eth-builder.com",
+    "https://mev.api.blxrbdn.com",
+    "https://api.blocknative.com/v1/auction"
+  ];
 
   const debug = await Promise.allSettled(
     relays.map((relay) =>
@@ -213,18 +221,18 @@ export async function executeFlashLoanArbitrage(
     )
   );
 
-  const success = debug.some(
-    (result) =>
-      result.status === "fulfilled" &&
-      result.value.receipts.some(
-        (receipt) =>
-          receipt.status === "fulfilled" &&
-          receipt.value &&
-          receipt.value.status === 1
-      )
-  );
+  try {
+    const hash = ethers.utils.keccak256(signedTx);
+    const receipt = await provider.waitForTransaction(
+      hash,
+      1,
+      60000
+    );
 
-  return { success, tx, debug };
+    return { success: true, tx, debug: receipt };
+  } catch (e) {
+    return { success: false, tx, debug: debug };
+  }
 }
 
 async function sendToRelay(
@@ -241,26 +249,16 @@ async function sendToRelay(
     1
   );
 
-  const blocks = [block + 1, block + 2, block + 3, block + 4];
+  const blocks = [block + 1, block + 2];
 
   const bundlePromises = blocks.map((targetBlockNumber) =>
     flashbotsProvider.sendRawBundle([signedTx], targetBlockNumber)
   );
-  const bundles: any[] = await Promise.all(bundlePromises);
-
-  const simulations = await Promise.allSettled(
-    bundles.map((bundle) => bundle.simulate())
-  );
-
-  const receipts = await Promise.allSettled(
-    bundles.map((bundle) => bundle.receipts())
-  );
+  const bundles: any[] = await Promise.allSettled(bundlePromises);
 
   return {
     blocks,
-    bundles: bundles.map((bundle) => bundle.bundleHash),
-    receipts,
-    simulations,
+    bundles: bundles.map((bundle) => bundle.bundleHash)
   };
 }
 
