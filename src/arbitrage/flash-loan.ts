@@ -257,6 +257,7 @@ async function sendToRelay(
   const bundles: any[] = await Promise.allSettled(bundlePromises);
 
   return {
+    relay: relay,
     blocks,
     bundles: bundles.map((bundle) => bundle.bundleHash)
   };

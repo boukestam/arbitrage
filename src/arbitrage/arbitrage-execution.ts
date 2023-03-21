@@ -177,10 +177,6 @@ export class ArbitrageExecution {
     if (this.netProfitInUSD > 5000000n) {
       this.minerRewardInUSD = this.netProfitInUSD - 5000000n;
 
-      if (this.minerRewardInUSD > this.gasInUSD) {
-        this.minerRewardInUSD = this.gasInUSD; // max multiplier of gas price is 2
-      }
-
       this.gasPrice =
         (this.gasPrice * (this.gasInUSD + this.minerRewardInUSD)) /
         this.gasInUSD;
