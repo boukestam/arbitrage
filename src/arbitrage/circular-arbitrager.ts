@@ -111,14 +111,10 @@ export class CircularArbitrager {
     const path = arbitrage.getPath();
     const pairs = path.slice(1).map((arbitrage) => arbitrage.pair);
 
-    for (const pair of pairs) pair.save();
-
     let amount = input;
     for (let i = 1; i < path.length; i++) {
-      amount = path[i].pair.swap(path[i - 1].token, amount, true);
+      amount = path[i].pair.swap(path[i - 1].token, amount);
     }
-
-    for (const pair of pairs) pair.restore();
 
     return amount - Arbitrage.calculateFee(input, fee);
   }

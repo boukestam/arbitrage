@@ -227,7 +227,10 @@ export class ArbitrageExecution {
     const path = this.arbitrage.getPath().map((arbitrage) => ({
       token: tokens.get(arbitrage.token),
       amount: arbitrage.amount,
-      pair: arbitrage.pair?.address,
+      pair: arbitrage.pair && {
+        address: arbitrage.pair.address,
+        exchange: arbitrage.pair.exchange.name,
+      },
     }));
 
     return {

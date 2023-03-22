@@ -5,7 +5,8 @@ import { UniswapV3 } from "../exchanges/uniswap-v3";
 import { getStarters } from "../arbitrage/starters";
 
 const provider = new ethers.providers.JsonRpcBatchProvider(
-  "http://127.0.0.1:8545"
+  //"http://127.0.0.1:8545",
+  "https://nd-497-196-530.p2pify.com/b5baf29f386396a64b054628ba0e8dbc"
 );
 
 export const blocked = new Set<string>([
@@ -79,9 +80,9 @@ export async function createEthereumBot() {
     flashbotsProvider,
     [
       uniswapV2,
-      //sushiSwap,
-      // shibaSwap,
-      // fraxSwap,
+      sushiSwap,
+      shibaSwap,
+      fraxSwap,
       // uniswapV3,
     ],
     blocked,

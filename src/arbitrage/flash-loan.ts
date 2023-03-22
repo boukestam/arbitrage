@@ -60,7 +60,12 @@ export async function verifyFlashLoanArbitrage(
         flash.address
       );
 
-      const approveRouterTx = await token.populateTransaction.approve(
+      const approveToken = new Contract(
+        exchangePath[0].token,
+        erc20ABI,
+        provider
+      );
+      const approveRouterTx = await approveToken.populateTransaction.approve(
         swapTx.to,
         input
       );
@@ -69,7 +74,7 @@ export async function verifyFlashLoanArbitrage(
       let swapInput = 0n;
 
       if (previousPath) {
-        const outputStart = 32 + (previousPath.length - 2) * 32; // first 32 bytes is array length;
+        const outputStart = 32 + 32 + (previousPath.length - 1) * 32; // first 32 bytes length in bytes, second 32 bytes is array length;
 
         approveInput = encodeInput(
           actions.length - 1,
@@ -206,13 +211,14 @@ export async function executeFlashLoanArbitrage(
   const signedTx = await wallet.signTransaction(tx);
 
   const relays = [
-    "https://relay.flashbots.net", 
+    "https://relay.flashbots.net",
     "https://builder0x69.io",
     "https://rpc.beaverbuild.org",
+    "https://rsync-builder.xyz",
     "https://buildai.net",
     "https://eth-builder.com",
     "https://mev.api.blxrbdn.com",
-    "https://api.blocknative.com/v1/auction"
+    "https://api.blocknative.com/v1/auction",
   ];
 
   const debug = await Promise.allSettled(
@@ -223,11 +229,7 @@ export async function executeFlashLoanArbitrage(
 
   try {
     const hash = ethers.utils.keccak256(signedTx);
-    const receipt = await provider.waitForTransaction(
-      hash,
-      1,
-      60000
-    );
+    const receipt = await provider.waitForTransaction(hash, 1, 60000);
 
     return { success: true, tx, debug: receipt };
   } catch (e) {
@@ -259,7 +261,7 @@ async function sendToRelay(
   return {
     relay: relay,
     blocks,
-    bundles: bundles.map((bundle) => bundle.bundleHash)
+    bundles: bundles,
   };
 }
 

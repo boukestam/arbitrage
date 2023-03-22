@@ -12,9 +12,12 @@ process.on("unhandledRejection", (reason, p) => {
 
 async function main() {
   const ethereumBot = await createEthereumBot();
-  const arbitrumBot = await createArbitrumBot();
+  //const arbitrumBot = await createArbitrumBot();
 
-  const bots = [ethereumBot, arbitrumBot];
+  const bots = [
+    ethereumBot,
+    //arbitrumBot
+  ];
 
   const server = startServer(bots, 8080);
 
