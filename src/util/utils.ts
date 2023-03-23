@@ -69,3 +69,7 @@ export function bigintToHex(value: bigint, length: number) {
   const s = value.toString(16);
   return "0".repeat(length * 2 - s.length) + s;
 }
+
+export function allTheSame(array: any[]) {
+  return array.every((item) => item === array[0]);
+}

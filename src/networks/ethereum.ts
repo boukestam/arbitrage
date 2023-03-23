@@ -5,7 +5,7 @@ import { UniswapV3 } from "../exchanges/uniswap-v3";
 import { getStarters } from "../arbitrage/starters";
 
 const provider = new ethers.providers.JsonRpcBatchProvider(
-  //"http://127.0.0.1:8545",
+  //"http://127.0.0.1:8545"
   "https://nd-497-196-530.p2pify.com/b5baf29f386396a64b054628ba0e8dbc"
 );
 
@@ -23,6 +23,7 @@ export const blocked = new Set<string>([
   "0xFeeeef4D7b4Bf3cc8BD012D02D32Ba5fD3D51e31", // TAIL
   "0xBfB2b6870501a6Ff17121D676A0A45a38c9eeD1e", // TOAD
   "0x616ef40D55C0D2c506f4d6873Bda8090b79BF8fC", // KTO
+  "0x33D203FA03bb30b133De0fE2d6533C268bA286B6", // MANDOX
 
   // Weird
   "0xd233D1f6FD11640081aBB8db125f722b5dc729dc", // Old USD
@@ -82,7 +83,7 @@ export async function createEthereumBot() {
       uniswapV2,
       sushiSwap,
       shibaSwap,
-      fraxSwap,
+      // fraxSwap,
       // uniswapV3,
     ],
     blocked,

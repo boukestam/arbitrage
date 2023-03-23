@@ -13,9 +13,15 @@ export function startServer(bots: Bot[], port: number) {
     .createServer(function (req, res) {
       try {
         const data = bots.map((bot) => {
-          const history = bot.history.map((batch) =>
-            batch.map((execution) => execution.toObject(bot.tokens))
-          );
+          const history = bot.history.map((batch) => ({
+            executions: batch.executions.map((execution) =>
+              execution.toObject(bot.tokens)
+            ),
+            block: batch.block,
+            timestamp: batch.timestamp,
+            pathFindingTime: batch.pathFindingTime,
+            validationTime: batch.validationTime,
+          }));
           const executed = bot.executed.map((execution) =>
             execution.toObject(bot.tokens)
           );

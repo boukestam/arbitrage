@@ -96,27 +96,8 @@ export class UniswapV3 extends Exchange {
     );
   }
 
-  async getSwapTx(
-    provider: ethers.providers.BaseProvider,
-    input: bigint,
-    minOutput: bigint,
-    path: Arbitrage[],
-    to: string
-  ) {
-    const router = new Contract(this.router, uniswapV3RouterABI, provider);
-
-    const swapTx = await router.populateTransaction.exactInput({
-      path: UniswapV3.encodePath(
-        path.map((arbitrage) => arbitrage.token),
-        path.slice(1).map((arbitrage) => (arbitrage.pair as UniswapV3Pair).fee)
-      ),
-      recipient: to,
-      deadline: Math.floor(Date.now() / 1000) + 600, // 10 minutes from now
-      amountIn: input,
-      amountOutMinimum: minOutput,
-    });
-
-    return swapTx;
+  getContract(provider: ethers.providers.Provider | ethers.Signer) {
+    return new Contract(this.router, uniswapV3RouterABI, provider);
   }
 
   static encodePath(path: string[], fees: bigint[]): string {
@@ -243,7 +224,7 @@ export class UniswapV3Pair extends Pair {
     );
   }
 
-  getContract(provider: ethers.providers.BaseProvider) {
+  getContract(provider: ethers.providers.Provider | ethers.Signer) {
     return new Contract(this.address, uniswapV3PoolABI, provider);
   }
 

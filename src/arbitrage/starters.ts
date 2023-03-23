@@ -13,7 +13,7 @@ export function getStarters(uniswapV3: UniswapV3, stable: string) {
   const liquidV3Pairs = findLiquidPairs(
     uniswapV3.pairs,
     stable,
-    constants.MIN_LIQUIDITY_IN_USDT
+    constants.MIN_LIQUIDITY_IN_USDT / 10n
   );
 
   const starters: StartToken[] = [];

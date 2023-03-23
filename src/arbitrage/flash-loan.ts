@@ -4,6 +4,7 @@ import {
   Contract,
   Wallet,
   PopulatedTransaction,
+  VoidSigner,
 } from "ethers";
 import { Arbitrage } from "./arbitrage";
 import { AbiCoder } from "ethers/lib/utils";
@@ -24,6 +25,11 @@ export interface VerificationResult {
   args: any[];
 }
 
+interface Action {
+  input: bigint;
+  tx: PopulatedTransaction;
+}
+
 export async function verifyFlashLoanArbitrage(
   provider: ethers.providers.BaseProvider,
   flashContract: string,
@@ -33,70 +39,87 @@ export async function verifyFlashLoanArbitrage(
   isToken0: boolean,
   fee: bigint
 ): Promise<VerificationResult> {
+  const voidSigner = new VoidSigner(constants.ADDRESS);
+
   const flash = new Contract(flashContract, arbitrageABI, provider);
-  const token = new Contract(path[0].token, erc20ABI, provider);
+  const token = new Contract(path[0].token, erc20ABI, voidSigner);
 
-  const actions: {
-    input: bigint;
-    tx: PopulatedTransaction;
-  }[] = [];
-
-  const exchanges = path.slice(1).map((arbitrage) => arbitrage.pair.exchange);
+  const pairs = path.slice(1).map((arbitrage) => arbitrage.pair);
 
   let exchangePath = path.slice(0, 2);
-  let exchange = exchanges[0];
+  let exchange = pairs[0].exchange;
   let previousPath: Arbitrage[] | undefined;
+  let previousAmountsIndex: number | undefined;
+
+  const actions: Action[] = [];
+
+  const transferTx = await token.populateTransaction.transfer(
+    pairs[0].address,
+    input
+  );
+  actions.push({
+    input: 0n,
+    tx: transferTx,
+  });
 
   // <= in order to also do the last swap
-  for (let i = 1; i <= exchanges.length; i++) {
-    if (exchange === exchanges[i]) {
+  for (let i = 1; i <= pairs.length; i++) {
+    if (exchange === pairs[i]?.exchange) {
       exchangePath.push(path[i + 1]);
     } else {
-      const swapTx = await exchange.getSwapTx(
-        provider,
+      const router = exchange.getContract(voidSigner);
+
+      const amountsTx = await router.populateTransaction.getAmountsOut(
         input,
-        0n, // TODO: calculate min output
-        exchangePath,
-        flash.address
+        exchangePath.map((arbitrage) => arbitrage.token)
       );
-
-      const approveToken = new Contract(
-        exchangePath[0].token,
-        erc20ABI,
-        provider
-      );
-      const approveRouterTx = await approveToken.populateTransaction.approve(
-        swapTx.to,
-        input
-      );
-
-      let approveInput = 0n;
-      let swapInput = 0n;
-
-      if (previousPath) {
-        const outputStart = 32 + 32 + (previousPath.length - 1) * 32; // first 32 bytes length in bytes, second 32 bytes is array length;
-
-        approveInput = encodeInput(
-          actions.length - 1,
-          outputStart,
-          32 // first 32 bytes is spender address
-        );
-
-        swapInput = encodeInput(actions.length - 1, outputStart, 0);
-      }
-
+      // first 32 bytes length in bytes, second 32 bytes is array length
+      const amountsInput = previousPath
+        ? encodeInput(
+            previousAmountsIndex,
+            64 + (previousPath.length - 1) * 32,
+            0
+          )
+        : 0n;
       actions.push({
-        input: approveInput,
-        tx: approveRouterTx,
+        input: amountsInput,
+        tx: amountsTx,
       });
-      actions.push({
-        input: swapInput,
-        tx: swapTx,
-      });
+      previousAmountsIndex = actions.length - 1;
+
+      const exchangePairs = exchangePath
+        .slice(1)
+        .map((arbitrage) => arbitrage.pair);
+
+      const swapTxs = await Promise.all(
+        exchangePairs.map((pair, j, arr) => {
+          const to =
+            j < arr.length - 1
+              ? arr[j + 1].address
+              : i === pairs.length
+              ? flashContract
+              : pairs[i].address;
+          return pair
+            .getContract(voidSigner)
+            .populateTransaction.swap(0, 0, to, "0x");
+        })
+      );
+      actions.push(
+        ...swapTxs.map((tx, txIndex) => ({
+          input: encodeInput(
+            previousAmountsIndex,
+            64 + (txIndex + 1) * 32,
+            exchangePairs[txIndex].token0 === exchangePath[txIndex + 1].token
+              ? 0 // if the output token is token0, its amount0Out, the first argument
+              : 32 // if the output token is not token0, its amount1Out, the second argument
+          ),
+          tx,
+        }))
+      );
 
       previousPath = exchangePath;
       exchangePath = path.slice(i, i + 2);
-      exchange = exchanges[i];
+      exchange = pairs[i]?.exchange;
     }
   }
 

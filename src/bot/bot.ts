@@ -9,6 +9,16 @@ import { StartToken } from "../arbitrage/starters";
 import { ArbitrageExecution } from "../arbitrage/arbitrage-execution";
 import { Arbitrage } from "../arbitrage/arbitrage";
 
+const VALIDATION_BATCH_SIZE = 250;
+
+export interface ArbitrageResult {
+  executions: ArbitrageExecution[];
+  block: number;
+  timestamp: number;
+  pathFindingTime: number;
+  validationTime: number;
+}
+
 export class Bot {
   name: string;
   provider: ethers.providers.BaseProvider;
@@ -24,7 +34,7 @@ export class Bot {
   pairs: Pair[] = [];
   tokens = new Map<string, TokenInfo>();
 
-  history: ArbitrageExecution[][] = [];
+  history: ArbitrageResult[] = [];
   executed: ArbitrageExecution[] = [];
 
   blacklist = new Map<string, number>();
@@ -167,8 +177,10 @@ export class Bot {
         }
 
         if (pairsToUpdate.size > 0) {
+          const pairsToUpdateArray = Array.from(pairsToUpdate.values());
+
           await batch(
-            Array.from(pairsToUpdate.values()),
+            pairsToUpdateArray,
             (pair) => pair.reload(this.provider),
             1000
           );
@@ -179,7 +191,11 @@ export class Bot {
             constants.MIN_LIQUIDITY_IN_USDT
           );
 
-          await this.findArbitrages(arbitragePairs, latestBlock);
+          await this.findArbitrages(
+            arbitragePairs,
+            pairsToUpdateArray,
+            latestBlock
+          );
         }
 
         nextBlock += newBlockNumbers.length;
@@ -197,15 +213,47 @@ export class Bot {
 
   async findArbitrages(
     arbitragePairs: LiquidityInfo[],
+    updatedPairs: Pair[],
     latestBlock: ethers.providers.Block
   ) {
     const arbitrager = new CircularArbitrager(arbitragePairs);
 
+    const startPathFinding = Date.now();
+
+    const updatedTokens = new Set<string>();
+    for (const pair of updatedPairs) {
+      updatedTokens.add(pair.token0);
+      updatedTokens.add(pair.token1);
+    }
+
+    const updatedStarters = this.starters
+      .filter((starter) => updatedTokens.has(starter.address))
+      .slice(0, 10); // max 10 starters to not overload the path finding
+
     // Find all arbitrages
-    const arbitrages = arbitrager
-      .find(this.starters)
+    let arbitrages = arbitrager
+      .find(updatedStarters)
       .filter((arbitrage) => !this.isBlacklisted(arbitrage));
+
+    const pathFindingTime = Date.now() - startPathFinding;
+    console.log(
+      this.name +
+        " bot found " +
+        arbitrages.length +
+        " arbitrages for " +
+        updatedStarters.length +
+        " starters in " +
+        pathFindingTime +
+        "ms"
+    );
+
     if (arbitrages.length === 0) return;
+
+    // Sort and take top arbitrages
+    arbitrages.sort(
+      (a, b) => b.getProfitPercentage() - a.getProfitPercentage()
+    );
+    arbitrages = arbitrages.slice(0, VALIDATION_BATCH_SIZE);
 
     // Create executions
     const executions = arbitrages.map((arbitrage) => {
@@ -218,16 +266,28 @@ export class Bot {
       return new ArbitrageExecution(arbitrage, arbitrager, token, pool);
     });
 
+    const result = {
+      executions: executions,
+      block: latestBlock.number,
+      timestamp: Date.now(),
+      pathFindingTime: pathFindingTime,
+      validationTime: 0,
+    };
+
     // Store executions in history
-    this.history.push(executions);
+    this.history.push(result);
     if (this.history.length > 20) this.history.shift();
+
+    const startValidation = Date.now();
 
     // Verify executions
     await batch(
       executions,
       (execution) => execution.verify(this.provider, this.flashContract),
-      100
+      VALIDATION_BATCH_SIZE
     );
+
+    result.validationTime = Date.now() - startValidation;
 
     for (const execution of executions) {
       if (!execution.verified) this.addToBlacklist(execution.arbitrage);

@@ -54,24 +54,8 @@ export class UniswapV2 extends Exchange {
     );
   }
 
-  async getSwapTx(
-    provider: ethers.providers.BaseProvider,
-    input: bigint,
-    minOutput: bigint,
-    path: Arbitrage[],
-    to: string
-  ) {
-    const router = new Contract(this.router, uniswapV2RouterABI, provider);
-
-    const swapTx = await router.populateTransaction.swapExactTokensForTokens(
-      input,
-      minOutput,
-      path.map((arbitrage) => arbitrage.token),
-      to,
-      Math.floor(Date.now() / 1000) + 600 // 10 minutes from now
-    );
-
-    return swapTx;
+  getContract(provider: ethers.providers.Provider | ethers.Signer) {
+    return new Contract(this.router, uniswapV2RouterABI, provider);
   }
 
   toJSON() {
@@ -126,7 +110,7 @@ export class UniswapV2Pair extends Pair {
     return this.reserve0 > 0 && this.reserve1 > 0;
   }
 
-  getContract(provider: ethers.providers.BaseProvider) {
+  getContract(provider: ethers.providers.Provider | ethers.Signer) {
     return new Contract(this.address, uniswapV2PairABI, provider);
   }
 

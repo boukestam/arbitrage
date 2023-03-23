@@ -19,7 +19,7 @@ async function main() {
     //arbitrumBot
   ];
 
-  const server = startServer(bots, 8080);
+  const server = startServer(bots, 3010);
 
   process.on("exit", (code) => {
     server.close();

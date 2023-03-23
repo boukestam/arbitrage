@@ -2,9 +2,10 @@ import { ethers } from "ethers";
 import { Arbitrage } from "./arbitrage";
 import { LiquidityInfo } from "../exchanges/liquidity";
 import { percentage } from "../util/math";
-import { Pair } from "../exchanges/types";
-import { batch, createMap } from "../util/utils";
+import { Exchange, Pair } from "../exchanges/types";
+import { allTheSame, batch, createMap } from "../util/utils";
 import { StartToken } from "./starters";
+import { Queue } from "js-linked-queue";
 
 export class CircularArbitrager {
   pairs: LiquidityInfo[];
@@ -25,17 +26,17 @@ export class CircularArbitrager {
 
     for (const token of starters) {
       const pairs = this.pairsByToken.get(token.address);
-      if (!pairs) continue;
+      if (!pairs || pairs.length === 1) continue;
 
       const minAmount =
         pairs[0].pair.token0 === token.address
           ? pairs[0].minAmount0
           : pairs[0].minAmount1;
-      const amount = minAmount / 10n;
+      const amount = minAmount / 100n;
 
       const fee = Arbitrage.calculateFee(amount, token.fee);
 
-      const results = this.findForToken(token.address, amount, 10);
+      const results = this.findForToken(token.address, amount, 8);
 
       for (const result of results) {
         if (result.amount - fee > amount) {
@@ -47,29 +48,25 @@ export class CircularArbitrager {
     return arbitrages;
   }
 
-  findForToken(token: string, amount: bigint, maxDepth: number) {
-    const nodes: Arbitrage[] = [new Arbitrage(null, null, token, amount, 0)];
+  findForToken(token: string, amount: bigint, maxDepth: number): Arbitrage[] {
+    const queue: Queue<Arbitrage> = new Queue<Arbitrage>([
+      new Arbitrage(null, null, token, amount, 0),
+    ]);
 
     const bestOutputByToken = new Map<string, bigint>();
     bestOutputByToken.set(token, amount);
 
     const arbitrages: Arbitrage[] = [];
 
-    while (nodes.length > 0) {
-      const node = nodes.shift();
+    while (queue.size() > 0) {
+      const node = queue.dequeue();
 
       const pairs = this.pairsByToken.get(node.token);
 
       for (const pair of pairs) {
         const otherToken = pair.pair.other(node.token);
 
-        let amountOut;
-        try {
-          amountOut = pair.pair.swap(node.token, node.amount);
-          if (amountOut === 0n) continue;
-        } catch {
-          continue;
-        }
+        let amountOut = pair.pair.swap(node.token, node.amount);
 
         if (!bestOutputByToken.has(otherToken)) {
           bestOutputByToken.set(otherToken, amountOut);
@@ -91,7 +88,7 @@ export class CircularArbitrager {
             )
           );
         } else if (node.depth + 1 < maxDepth) {
-          nodes.push(
+          queue.enqueue(
             new Arbitrage(
               node,
               pair.pair,
@@ -109,12 +106,15 @@ export class CircularArbitrager {
 
   getOutput(arbitrage: Arbitrage, input: bigint, fee: bigint) {
     const path = arbitrage.getPath();
-    const pairs = path.slice(1).map((arbitrage) => arbitrage.pair);
+
+    for (let i = 1; i < path.length; i++) path[i].pair.save();
 
     let amount = input;
     for (let i = 1; i < path.length; i++) {
-      amount = path[i].pair.swap(path[i - 1].token, amount);
+      amount = path[i].pair.swap(path[i - 1].token, amount, true);
     }
+
+    for (let i = 1; i < path.length; i++) path[i].pair.restore();
 
     return amount - Arbitrage.calculateFee(input, fee);
   }
@@ -125,7 +125,8 @@ export class CircularArbitrager {
     let input = path[0].amount;
     let output = this.getOutput(arbitrage, input, fee);
 
-    const precision = BigInt(1e6);
+    const precision = 1000n;
+    const step = precision / 10n;
     let divider = precision * 2n;
 
     while (true) {
@@ -141,8 +142,8 @@ export class CircularArbitrager {
       } else if (moreOutput - moreInput > output - input) {
         input = moreInput;
         output = moreOutput;
-      } else if (divider > 100) {
-        divider /= 2n;
+      } else if (divider > precision) {
+        divider -= step;
       } else {
         break;
       }

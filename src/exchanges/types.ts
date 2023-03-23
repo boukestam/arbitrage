@@ -30,13 +30,9 @@ export abstract class Exchange {
     }
   }
 
-  abstract getSwapTx(
-    provider: ethers.providers.BaseProvider,
-    input: bigint,
-    minOutput: bigint,
-    path: Arbitrage[],
-    to: string
-  ): Promise<ethers.PopulatedTransaction>;
+  abstract getContract(
+    provider: ethers.providers.Provider | ethers.Signer
+  ): ethers.Contract;
 
   abstract toJSON(): any;
   abstract fromJSON(data: any): void;
@@ -59,6 +55,10 @@ export abstract class Pair {
     this.token0 = token0;
     this.token1 = token1;
   }
+
+  abstract getContract(
+    provider: ethers.providers.Provider | ethers.Signer
+  ): ethers.Contract;
 
   abstract isTradable(): boolean;
 
